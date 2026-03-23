@@ -109,6 +109,41 @@ impl UError for PasswdError {
 }
 
 // ---------------------------------------------------------------------------
+// Security hardening — process hardening
+// ---------------------------------------------------------------------------
+
+/// Suppress core dumps and prevent ptrace attachment.
+///
+/// OpenBSD's `pw_init()` sets `RLIMIT_CORE=0`. A core dump from a setuid
+/// passwd process could expose password hashes and plaintext passwords.
+fn suppress_core_dumps() {
+    // RLIMIT_CORE = 0: no core dumps. Best-effort — ignore errors.
+    let _ = nix::sys::resource::setrlimit(nix::sys::resource::Resource::RLIMIT_CORE, 0, 0);
+    // PR_SET_DUMPABLE = 0: prevent ptrace attachment and /proc/pid/mem reads.
+    // Linux-specific — silently skipped on other platforms.
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: prctl with PR_SET_DUMPABLE is a simple flag set, no pointers.
+        unsafe {
+            libc::prctl(libc::PR_SET_DUMPABLE, 0);
+        }
+    }
+}
+
+/// Raise `RLIMIT_FSIZE` to prevent truncated file writes.
+///
+/// OpenBSD raises `RLIMIT_FSIZE` to infinity before file operations. A
+/// malicious caller could `ulimit -f 1` before invoking setuid passwd,
+/// causing /etc/shadow to be truncated mid-write.
+fn raise_file_size_limit() {
+    let _ = nix::sys::resource::setrlimit(
+        nix::sys::resource::Resource::RLIMIT_FSIZE,
+        nix::sys::resource::RLIM_INFINITY,
+        nix::sys::resource::RLIM_INFINITY,
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Security hardening — environment sanitization
 // ---------------------------------------------------------------------------
 
@@ -171,6 +206,8 @@ fn apply_landlock_inner(_root: &SysRoot) {
 #[uucore::main]
 #[allow(clippy::too_many_lines)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
+    suppress_core_dumps();
+    raise_file_size_limit();
     sanitize_env();
 
     let matches = match uu_app().try_get_matches_from(args) {
@@ -291,6 +328,18 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
             Ok(())
         });
+    }
+
+    // Prevent non-root from targeting other users (avoids timing-based
+    // user enumeration through PAM auth failure timing).
+    if !caller_is_root() {
+        let current = get_current_username()?;
+        if current != target_user {
+            return Err(PasswdError::PermissionDenied(
+                "You may not view or modify password information for another user.".into(),
+            )
+            .into());
+        }
     }
 
     // Default: password change via PAM.
@@ -520,10 +569,39 @@ impl Drop for PrivDrop {
     }
 }
 
+/// Install a signal handler for SIGINT that prints "Password unchanged."
+/// and exits cleanly. This matches OpenBSD's kbintr pattern.
+///
+/// Only call this during interactive password input. The handler uses
+/// async-signal-safe functions only (_exit, write).
+fn install_interrupt_handler() {
+    // SAFETY: The handler uses only async-signal-safe operations
+    // (write to fd 2, _exit). No heap allocation or mutex locking.
+    unsafe {
+        let action = nix::sys::signal::SigAction::new(
+            nix::sys::signal::SigHandler::Handler(handle_interrupt),
+            nix::sys::signal::SaFlags::empty(),
+            nix::sys::signal::SigSet::empty(),
+        );
+        let _ = nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGINT, &action);
+    }
+}
+
+extern "C" fn handle_interrupt(_sig: libc::c_int) {
+    // Async-signal-safe: only write() and _exit().
+    // SAFETY: Writing to stderr fd and exiting — both are signal-safe.
+    unsafe {
+        libc::write(2, b"\nPassword unchanged.\n".as_ptr().cast(), 21);
+        libc::_exit(0);
+    }
+}
+
 /// Default operation: change password via PAM.
 ///
 /// Feature-gated on `pam`. When PAM is not compiled in, prints an error.
 fn cmd_pam_change(matches: &clap::ArgMatches, _target_user: &str) -> UResult<()> {
+    install_interrupt_handler();
+
     let _keep_tokens = matches.get_flag(options::KEEP_TOKENS);
     let _use_stdin = matches.get_flag(options::STDIN);
     let _repository = matches.get_one::<String>(options::REPOSITORY);
@@ -753,6 +831,12 @@ fn mutate_shadow<F>(
 where
     F: FnOnce(&mut ShadowEntry) -> Result<(), String>,
 {
+    // Consolidate real + effective UID to root for file operations.
+    // Some filesystem configurations check real UID.
+    if nix::unistd::geteuid().is_root() {
+        let _ = nix::unistd::setuid(nix::unistd::Uid::from_raw(0));
+    }
+
     // Block signals for the entire critical section (lock → write → unlock).
     // The RAII guard restores the original signal mask when this function returns.
     let _signals = SignalBlocker::block_critical()?;
@@ -1475,6 +1559,50 @@ mod tests {
             std::env::var("PATH").ok().as_deref(),
             Some("/usr/bin:/bin:/usr/sbin:/sbin")
         );
+    }
+
+    // -------------------------------------------------------------------
+    // OpenBSD hardening tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_core_dump_suppression() {
+        // After calling suppress_core_dumps(), RLIMIT_CORE should be 0.
+        suppress_core_dumps();
+        let (soft, _hard) =
+            nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_CORE).unwrap();
+        assert_eq!(soft, 0, "RLIMIT_CORE should be 0 after suppression");
+    }
+
+    #[test]
+    fn test_raise_file_size_limit() {
+        raise_file_size_limit();
+        let (soft, _hard) =
+            nix::sys::resource::getrlimit(nix::sys::resource::Resource::RLIMIT_FSIZE).unwrap();
+        // In environments where the hard limit is already restricted (containers,
+        // CI), we may not reach RLIM_INFINITY. Verify it's at least very large.
+        assert!(
+            soft >= 1024 * 1024 * 1024 || soft == nix::sys::resource::RLIM_INFINITY,
+            "RLIMIT_FSIZE should be raised (got {soft})"
+        );
+    }
+
+    #[test]
+    fn test_zero_length_write_rejected() {
+        // atomic_write should refuse to replace a file with zero-length output.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("shadow");
+        std::fs::write(&target, "original content\n").unwrap();
+
+        let result = shadow_core::atomic::atomic_write(&target, |_file| {
+            // Write nothing — zero-length output.
+            Ok(())
+        });
+
+        assert!(result.is_err(), "zero-length write should be rejected");
+        // Original file should be untouched.
+        let content = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(content, "original content\n");
     }
 
     #[test]
