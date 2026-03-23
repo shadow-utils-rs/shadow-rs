@@ -134,6 +134,15 @@ merge is frictionless.
 | `alpine` | `rust:alpine` | musl | Linux-PAM | none |
 | `fedora` | `fedora:latest` | glibc | Linux-PAM | enforcing |
 
+## Credits
+
+Security patterns from [OpenBSD](https://cvsweb.openbsd.org/src/usr.bin/passwd/)
+(ISC license). PAM integration patterns from
+[sudo-rs](https://github.com/trifectatechfoundation/sudo-rs) (Apache-2.0/MIT).
+uutils infrastructure via [`uucore`](https://crates.io/crates/uucore) (MIT).
+
+Code reviewed by GitHub Copilot and Google Gemini CLI.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
