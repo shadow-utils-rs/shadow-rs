@@ -85,6 +85,15 @@ where
 
     f(&mut tmp_file)?;
 
+    // Zero-length output guard: a zero-length shadow file locks out all users.
+    // OpenBSD checks this in pw_mkdb before replacing the original.
+    let written = tmp_file.metadata().map(|m| m.len()).unwrap_or(0);
+    if written == 0 {
+        return Err(ShadowError::Other(
+            "refusing to write zero-length file".into(),
+        ));
+    }
+
     // Flush and fsync.
     tmp_file
         .flush()
