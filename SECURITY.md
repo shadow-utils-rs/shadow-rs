@@ -19,7 +19,10 @@ reporting feature:
 2. Click "New draft security advisory"
 3. Fill in the details
 
-Or email the maintainers directly (add contact email when established).
+If private advisory reporting is unavailable, contact the maintainers
+directly using a private channel (for example, the email address listed
+in a maintainer's GitHub profile). Do not open a public GitHub issue for
+security vulnerabilities.
 
 ## What to Include
 
