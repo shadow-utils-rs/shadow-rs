@@ -44,10 +44,15 @@ pub struct ShadowEntry {
 }
 
 impl ShadowEntry {
-    /// Whether the account password is locked (password starts with `!`).
+    /// Whether the account password is locked.
+    ///
+    /// GNU shadow-utils considers a password locked if it:
+    /// - starts with `!` (explicitly locked via `passwd -l`)
+    /// - equals `*` (system account, no valid password)
+    /// - equals `!!` (never had a password set)
     #[must_use]
     pub fn is_locked(&self) -> bool {
-        self.passwd.starts_with('!')
+        self.passwd.starts_with('!') || self.passwd == "*"
     }
 
     /// Whether the account has no password (empty password field).

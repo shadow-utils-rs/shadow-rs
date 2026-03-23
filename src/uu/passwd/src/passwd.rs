@@ -56,10 +56,15 @@ pub fn uumain(args: impl IntoIterator<Item = std::ffi::OsString>) -> i32 {
         Ok(m) => m,
         Err(e) => {
             e.print().ok();
-            return if e.use_stderr() {
-                exit_codes::INVALID_OPTIONS
-            } else {
-                exit_codes::SUCCESS
+            if !e.use_stderr() {
+                // --help: clap prints to stdout, exit 0.
+                return exit_codes::SUCCESS;
+            }
+            // GNU passwd exits 2 for conflicting options, 6 for unknown/invalid.
+            return match e.kind() {
+                clap::error::ErrorKind::ArgumentConflict
+                | clap::error::ErrorKind::MissingRequiredArgument => exit_codes::INVALID_OPTIONS,
+                _ => exit_codes::INVALID_ARGUMENT,
             };
         }
     };
@@ -480,7 +485,7 @@ fn do_chroot(dir: &str) -> Result<(), i32> {
 /// Format: `username STATUS YYYY-MM-DD min max warn inactive`
 fn format_status(entry: &ShadowEntry) -> String {
     let date = match entry.last_change {
-        Some(0) => "01/01/1970".to_string(),
+        Some(0) => "1970-01-01".to_string(),
         Some(days) => format_days_since_epoch(days),
         None => "never".to_string(),
     };
@@ -504,7 +509,7 @@ fn format_status(entry: &ShadowEntry) -> String {
     )
 }
 
-/// Convert days since epoch to `MM/DD/YYYY` format (matching GNU `passwd -S`).
+/// Convert days since epoch to `YYYY-MM-DD` format (matching GNU `passwd -S`).
 fn format_days_since_epoch(days: i64) -> String {
     let secs = days * 86400;
     // SAFETY: zeroed tm struct is valid for localtime_r to populate.
@@ -515,10 +520,10 @@ fn format_days_since_epoch(days: i64) -> String {
         libc::localtime_r(&raw const time, &raw mut tm);
     }
     format!(
-        "{:02}/{:02}/{:04}",
+        "{:04}-{:02}-{:02}",
+        tm.tm_year + 1900,
         tm.tm_mon + 1,
-        tm.tm_mday,
-        tm.tm_year + 1900
+        tm.tm_mday
     )
 }
 
@@ -676,22 +681,18 @@ mod tests {
             reserved: String::new(),
         };
         let status = format_status(&entry);
-        // * is not locked (doesn't start with !), not empty => P
-        // We follow our logic: starts_with('!') => L, empty => NP, else => P.
-        assert!(status.contains(" P "));
+        // * is locked per GNU behavior.
+        assert!(status.contains(" L "));
         assert!(status.contains(" never "));
     }
 
     #[test]
     fn test_format_days_since_epoch() {
-        // Day 0 = 1970-01-01
         let result = format_days_since_epoch(0);
-        // localtime_r respects timezone, but day 0 in UTC is 01/01/1970.
-        // We use a fixed known value: day 19500 = 2023-05-15 (UTC).
-        // Instead, just verify the format is MM/DD/YYYY.
-        assert_eq!(result.len(), 10, "format should be MM/DD/YYYY");
-        assert_eq!(&result[2..3], "/");
-        assert_eq!(&result[5..6], "/");
+        // Verify YYYY-MM-DD format.
+        assert_eq!(result.len(), 10, "format should be YYYY-MM-DD");
+        assert_eq!(&result[4..5], "-");
+        assert_eq!(&result[7..8], "-");
     }
 
     #[test]
@@ -714,7 +715,7 @@ mod tests {
 
     #[test]
     fn test_format_status_star_password() {
-        // Password "*" — not locked (no leading !), not empty => P.
+        // Password "*" — GNU treats as locked (system account).
         let entry = ShadowEntry {
             name: "star".to_string(),
             passwd: "*".to_string(),
@@ -727,7 +728,7 @@ mod tests {
             reserved: String::new(),
         };
         let status = format_status(&entry);
-        assert!(status.contains(" P "), "* should show as P per our logic");
+        assert!(status.contains(" L "), "* should show as L (matching GNU)");
     }
 
     // -----------------------------------------------------------------------
