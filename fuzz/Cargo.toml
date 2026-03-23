@@ -1,0 +1,36 @@
+[package]
+name = "shadow-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+shadow-core = { path = "../src/shadow-core", features = ["shadow", "login-defs"] }
+tempfile = "3"
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_passwd_parse"
+path = "fuzz_targets/fuzz_passwd_parse.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_shadow_parse"
+path = "fuzz_targets/fuzz_shadow_parse.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_login_defs_parse"
+path = "fuzz_targets/fuzz_login_defs_parse.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_validate_username"
+path = "fuzz_targets/fuzz_validate_username.rs"
+doc = false

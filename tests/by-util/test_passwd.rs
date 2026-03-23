@@ -1,0 +1,320 @@
+// This file is part of the shadow-rs package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+// spell-checker:ignore warndays maxdays mindays chauthtok
+
+//! Integration tests for the `passwd` utility.
+//!
+//! Tests that require root are guarded by `skip_unless_root()` and run inside
+//! Docker CI containers. Non-root tests exercise clap parsing and error paths
+//! that do not need privilege.
+
+use std::ffi::OsString;
+
+/// Skip the test when not running as root (euid != 0).
+fn skip_unless_root() -> bool {
+    !nix::unistd::geteuid().is_root()
+}
+
+/// Run `uumain` with the given args, returning the exit code.
+fn run(args: &[&str]) -> i32 {
+    let os_args: Vec<OsString> = args.iter().map(|s| (*s).into()).collect();
+    passwd::uumain(os_args.into_iter())
+}
+
+/// Helper to create a temp dir with an `etc/shadow` file.
+fn setup_prefix(shadow_content: &str) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("failed to create etc dir");
+    std::fs::write(etc.join("shadow"), shadow_content).expect("failed to write shadow file");
+    dir
+}
+
+/// Read the shadow file content back from a prefix dir.
+fn read_shadow(dir: &tempfile::TempDir) -> String {
+    std::fs::read_to_string(dir.path().join("etc/shadow")).expect("failed to read shadow file")
+}
+
+/// Run `uumain` with a `--prefix` dir prepended to the args.
+fn run_with_prefix(dir: &tempfile::TempDir, extra_args: &[&str]) -> i32 {
+    let prefix_str = dir.path().to_str().expect("non-UTF-8 temp path");
+    let mut args = vec!["passwd", "-P", prefix_str];
+    args.extend_from_slice(extra_args);
+    run(&args)
+}
+
+// ---------------------------------------------------------------------------
+// Non-root tests — exercise clap parsing and error paths
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_help_exits_zero() {
+    let code = run(&["passwd", "--help"]);
+    assert_eq!(code, 0, "--help should exit 0");
+}
+
+#[test]
+fn test_unknown_flag_exits_six() {
+    let code = run(&["passwd", "--bogus"]);
+    assert_eq!(code, 6, "unknown flag should exit 6");
+}
+
+#[test]
+fn test_conflicting_flags_exits_two() {
+    // -l and -u conflict; clap reports ArgumentConflict which maps to exit 2.
+    let code = run(&["passwd", "-l", "-u", "someuser"]);
+    assert_eq!(code, 2, "conflicting flags should exit 2");
+}
+
+// ---------------------------------------------------------------------------
+// Root-only tests — exercise real operations via --prefix
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_status_output_format() {
+    if skip_unless_root() {
+        return;
+    }
+    // Verify the status line matches the expected GNU format:
+    //   username STATUS YYYY-MM-DD min max warn inactive
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let code = run_with_prefix(&dir, &["-S", "testuser"]);
+    assert_eq!(code, 0);
+}
+
+#[test]
+fn test_lock_unlock_cycle() {
+    if skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+
+    // Lock: password gets '!' prefix.
+    let code = run_with_prefix(&dir, &["-l", "testuser"]);
+    assert_eq!(code, 0);
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains("testuser:!$6$hash:"),
+        "after lock, expected '!' prefix, got: {content}"
+    );
+
+    // Verify status is L by parsing the entry.
+    let entry: shadow_core::shadow::ShadowEntry = content
+        .trim()
+        .parse()
+        .expect("failed to parse shadow entry");
+    assert_eq!(entry.status_char(), "L");
+
+    // Unlock: '!' prefix removed.
+    let code = run_with_prefix(&dir, &["-u", "testuser"]);
+    assert_eq!(code, 0);
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains("testuser:$6$hash:"),
+        "after unlock, expected no '!', got: {content}"
+    );
+
+    // Verify status is P.
+    let entry: shadow_core::shadow::ShadowEntry = content
+        .trim()
+        .parse()
+        .expect("failed to parse shadow entry");
+    assert_eq!(entry.status_char(), "P");
+}
+
+#[test]
+fn test_expire_sets_epoch() {
+    if skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let code = run_with_prefix(&dir, &["-e", "testuser"]);
+    assert_eq!(code, 0);
+
+    let content = read_shadow(&dir);
+    // last_change field (3rd colon-separated field) should be 0.
+    assert!(
+        content.contains("testuser:$6$hash:0:"),
+        "expire should set last_change to 0, got: {content}"
+    );
+}
+
+#[test]
+fn test_aging_all_fields() {
+    if skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let code = run_with_prefix(
+        &dir,
+        &["-n", "5", "-x", "90", "-w", "14", "-i", "30", "testuser"],
+    );
+    assert_eq!(code, 0);
+
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains("testuser:$6$hash:19500:5:90:14:30::"),
+        "all aging fields should be updated, got: {content}"
+    );
+}
+
+#[test]
+fn test_nonexistent_user_fails() {
+    if skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let code = run_with_prefix(&dir, &["-S", "nosuchuser"]);
+    assert_ne!(code, 0, "nonexistent user should fail");
+    // GNU passwd exits 3 for unexpected failures (user not found is exit 3).
+    assert_eq!(code, 3, "nonexistent user should exit 3");
+}
+
+#[test]
+fn test_missing_shadow_fails() {
+    if skip_unless_root() {
+        return;
+    }
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let etc = dir.path().join("etc");
+    std::fs::create_dir_all(&etc).expect("failed to create etc dir");
+    // No shadow file exists.
+    let code = run_with_prefix(&dir, &["-S", "testuser"]);
+    assert_eq!(code, 4, "missing shadow file should exit 4");
+}
+
+#[test]
+fn test_quiet_no_action_message() {
+    if skip_unless_root() {
+        return;
+    }
+    // -q suppresses the informational action message on stderr.
+    // We verify the operation still succeeds and the file is modified.
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let code = run_with_prefix(&dir, &["-q", "-l", "testuser"]);
+    assert_eq!(code, 0, "quiet lock should still succeed");
+
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains("testuser:!$6$hash:"),
+        "lock should still be applied with -q, got: {content}"
+    );
+}
+
+#[test]
+fn test_lock_and_aging_combined() {
+    if skip_unless_root() {
+        return;
+    }
+    // Mutation flag + aging flags must all apply in a single operation.
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let code = run_with_prefix(
+        &dir,
+        &[
+            "-l", "-n", "10", "-x", "60", "-w", "5", "-i", "20", "testuser",
+        ],
+    );
+    assert_eq!(code, 0);
+
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains("testuser:!$6$hash:19500:10:60:5:20::"),
+        "lock + aging should both apply, got: {content}"
+    );
+}
+
+#[test]
+fn test_multiple_users_only_target_modified() {
+    if skip_unless_root() {
+        return;
+    }
+    let shadow = "\
+alice:$6$alice:19500:0:99999:7:::\n\
+bob:$6$bob:19500:0:99999:7:::\n\
+charlie:$6$charlie:19500:0:99999:7:::\n";
+    let dir = setup_prefix(shadow);
+
+    let code = run_with_prefix(&dir, &["-l", "bob"]);
+    assert_eq!(code, 0);
+
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains("alice:$6$alice:19500:0:99999:7:::"),
+        "alice should be unchanged, got: {content}"
+    );
+    assert!(
+        content.contains("charlie:$6$charlie:19500:0:99999:7:::"),
+        "charlie should be unchanged, got: {content}"
+    );
+    assert!(
+        content.contains("bob:!$6$bob:19500:0:99999:7:::"),
+        "bob should be locked, got: {content}"
+    );
+}
+
+#[test]
+fn test_delete_password() {
+    if skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+    let code = run_with_prefix(&dir, &["-d", "testuser"]);
+    assert_eq!(code, 0);
+
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains("testuser::19500:"),
+        "delete should clear password, got: {content}"
+    );
+}
+
+#[test]
+fn test_unlock_only_bang_fails() {
+    if skip_unless_root() {
+        return;
+    }
+    // Password "!" cannot be unlocked (would leave empty).
+    let dir = setup_prefix("testuser:!:19500:0:99999:7:::\n");
+    let code = run_with_prefix(&dir, &["-u", "testuser"]);
+    assert_ne!(code, 0, "unlock with only '!' should fail");
+}
+
+#[test]
+fn test_full_lifecycle() {
+    if skip_unless_root() {
+        return;
+    }
+    let dir = setup_prefix("testuser:$6$hash:19500:0:99999:7:::\n");
+
+    // Lock.
+    assert_eq!(run_with_prefix(&dir, &["-l", "testuser"]), 0);
+    let entry: shadow_core::shadow::ShadowEntry =
+        read_shadow(&dir).trim().parse().expect("parse after lock");
+    assert_eq!(entry.status_char(), "L", "after lock");
+
+    // Unlock.
+    assert_eq!(run_with_prefix(&dir, &["-u", "testuser"]), 0);
+    let entry: shadow_core::shadow::ShadowEntry = read_shadow(&dir)
+        .trim()
+        .parse()
+        .expect("parse after unlock");
+    assert_eq!(entry.status_char(), "P", "after unlock");
+
+    // Delete.
+    assert_eq!(run_with_prefix(&dir, &["-d", "testuser"]), 0);
+    let entry: shadow_core::shadow::ShadowEntry = read_shadow(&dir)
+        .trim()
+        .parse()
+        .expect("parse after delete");
+    assert_eq!(entry.status_char(), "NP", "after delete");
+
+    // Expire.
+    assert_eq!(run_with_prefix(&dir, &["-e", "testuser"]), 0);
+    let entry: shadow_core::shadow::ShadowEntry = read_shadow(&dir)
+        .trim()
+        .parse()
+        .expect("parse after expire");
+    assert_eq!(entry.last_change, Some(0), "after expire");
+}

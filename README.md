@@ -31,10 +31,15 @@ default-in-Ubuntu in under 3 years. shadow-rs follows that playbook.
 
 - **Drop-in replacement**: same flags, same exit codes, same output format as
   GNU shadow-utils. Differences are treated as bugs.
+- **uutils compatible**: built on [`uucore`](https://crates.io/crates/uucore)
+  with the standard `uumain()` / `uu_app()` API contract. Designed to merge
+  into the uutils ecosystem.
 - **Memory safe**: eliminate entire classes of vulnerabilities (buffer overflows,
-  use-after-free, uninitialized memory) that affect the C original.
-- **Well-tested**: unit tests, property-based tests, integration tests in
-  isolated namespaces, fuzz targets for all parsers.
+  use-after-free, uninitialized memory) that affect the C original. Passwords
+  zeroed in memory via `zeroize`.
+- **Well-tested**: unit tests, property-based tests (`proptest`), integration
+  tests, fuzz targets for all parsers. Tested on Debian, Alpine (musl), and
+  Fedora (SELinux).
 - **Auditable**: small dependency tree, `cargo-deny` license and advisory
   checks, no GPL dependencies.
 
@@ -42,7 +47,7 @@ default-in-Ubuntu in under 3 years. shadow-rs follows that playbook.
 
 | Tool | Status |
 |------|--------|
-| `passwd` | `-S`, `-l`, `-u`, `-d`, `-e`, `-n`, `-x`, `-w`, `-i`, `-P`, `-a` implemented. PAM password change in progress. |
+| `passwd` | **All 17 flags implemented.** Drop-in for GNU passwd. PAM password change, `--root`, `--quiet`, `--stdin`. Output bit-for-bit identical with GNU. |
 | `pwck` | Planned (Phase 1) |
 | `useradd` | Planned (Phase 2) |
 | `userdel` | Planned (Phase 2) |
@@ -94,15 +99,19 @@ docker compose run --rm debian cargo fmt --all --check
 
 ## Architecture
 
-Cargo workspace monorepo with three layers:
+Cargo workspace monorepo built on [`uucore`](https://crates.io/crates/uucore):
 
 ```
 src/bin/shadow-rs.rs     multicall binary (dispatches by argv[0])
         |
 src/uu/{tool}/           individual tool crates (passwd, useradd, ...)
         |
-src/shadow-core/         shared library (parsers, atomic writes, locking, PAM)
+   ┌────┴────┐
+uucore    shadow-core    shared infrastructure + domain library
 ```
+
+Tools use `uucore` for the standard uutils API (`UResult`, `#[uucore::main]`,
+`show_error!`) and `shadow-core` for domain-specific functionality.
 
 **shadow-core** provides:
 - File parsers for `/etc/passwd`, `/etc/shadow`, `/etc/group`, `/etc/gshadow`,

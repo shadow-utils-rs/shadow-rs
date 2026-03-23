@@ -118,4 +118,46 @@ mod tests {
     fn test_trailing_period() {
         assert!(validate_username("user.").is_err());
     }
+
+    // -------------------------------------------------------------------
+    // Issue #16: additional edge case tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_unicode_username_rejected() {
+        assert!(validate_username("café").is_err());
+    }
+
+    #[test]
+    fn test_null_byte_rejected() {
+        assert!(validate_username("\0user").is_err());
+    }
+
+    #[test]
+    fn test_max_length_32_ok() {
+        let name = "a".repeat(32);
+        assert!(validate_username(&name).is_ok());
+    }
+
+    #[test]
+    fn test_length_33_rejected() {
+        let name = "a".repeat(33);
+        assert!(validate_username(&name).is_err());
+    }
+
+    #[test]
+    fn test_only_dots_rejected() {
+        assert!(validate_username("..").is_err());
+        assert!(validate_username("...").is_err());
+    }
+
+    #[test]
+    fn test_hyphen_start_rejected() {
+        assert!(validate_username("-user").is_err());
+    }
+
+    #[test]
+    fn test_uppercase_rejected() {
+        assert!(validate_username("Root").is_err());
+    }
 }

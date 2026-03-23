@@ -137,4 +137,72 @@ mod tests {
         let defs = LoginDefs::load(&path).unwrap();
         assert_eq!(defs.get_i64("ENCRYPT_METHOD"), None);
     }
+
+    // -------------------------------------------------------------------
+    // Issue #16: parser edge case tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_tabs_and_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_login_defs(dir.path(), "PASS_MAX_DAYS\t \t 99999\n");
+        let defs = LoginDefs::load(&path).unwrap();
+        assert_eq!(defs.get_i64("PASS_MAX_DAYS"), Some(99999));
+    }
+
+    #[test]
+    fn test_parse_trailing_whitespace() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_login_defs(dir.path(), "PASS_MAX_DAYS  99999  \n");
+        let defs = LoginDefs::load(&path).unwrap();
+        assert_eq!(defs.get_i64("PASS_MAX_DAYS"), Some(99999));
+    }
+
+    #[test]
+    fn test_parse_duplicate_keys() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_login_defs(dir.path(), "PASS_MAX_DAYS 10000\nPASS_MAX_DAYS 99999\n");
+        let defs = LoginDefs::load(&path).unwrap();
+        // Last value wins (HashMap insert overwrites).
+        assert_eq!(defs.get_i64("PASS_MAX_DAYS"), Some(99999));
+    }
+
+    #[test]
+    fn test_parse_key_only_no_value() {
+        // A line with only a key and no whitespace-separated value should be
+        // silently skipped (split_once returns None).
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_login_defs(dir.path(), "LONELY_KEY\nPASS_MAX_DAYS 99999\n");
+        let defs = LoginDefs::load(&path).unwrap();
+        assert_eq!(defs.get("LONELY_KEY"), None);
+        assert_eq!(defs.get_i64("PASS_MAX_DAYS"), Some(99999));
+    }
+
+    #[test]
+    fn test_parse_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_login_defs(dir.path(), "");
+        let defs = LoginDefs::load(&path).unwrap();
+        assert_eq!(defs.get("PASS_MAX_DAYS"), None);
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #15: proptest round-trip tests
+    // -------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn test_login_defs_roundtrip(
+            key in "[A-Z_]{1,20}",
+            value in "[A-Za-z0-9/_:-]{1,40}",
+        ) {
+            let dir = tempfile::tempdir().unwrap();
+            let line = format!("{key} {value}\n");
+            let path = write_login_defs(dir.path(), &line);
+            let defs = LoginDefs::load(&path).unwrap();
+            prop_assert_eq!(defs.get(&key), Some(value.as_str()));
+        }
+    }
 }

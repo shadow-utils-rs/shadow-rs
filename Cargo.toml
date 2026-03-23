@@ -65,6 +65,15 @@ feat_common = ["feat_passwd"]
 name = "shadow-rs"
 path = "src/bin/shadow-rs.rs"
 
+[[test]]
+name = "test_passwd"
+path = "tests/by-util/test_passwd.rs"
+
+[dev-dependencies]
+shadow-core = { path = "src/shadow-core", features = ["shadow"] }
+nix = { workspace = true }
+tempfile = { workspace = true }
+
 [profile.release]
 lto = true
 strip = true

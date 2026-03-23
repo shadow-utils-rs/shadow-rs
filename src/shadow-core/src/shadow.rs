@@ -500,4 +500,143 @@ mod tests {
         };
         assert_eq!(entry.status_char(), "P");
     }
+
+    // -------------------------------------------------------------------
+    // Issue #16: parser edge case tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_too_few_fields() {
+        let result = "root:$6$hash:19000:0:99999:7::".parse::<ShadowEntry>();
+        assert!(result.is_err(), "8 fields should be rejected (need 9)");
+    }
+
+    #[test]
+    fn test_parse_too_many_fields() {
+        let result = "root:$6$hash:19000:0:99999:7:::extra:field".parse::<ShadowEntry>();
+        assert!(result.is_err(), "10+ fields should be rejected (need 9)");
+    }
+
+    #[test]
+    fn test_parse_negative_last_change() {
+        // Negative last_change is valid — it means "never changed" in some implementations.
+        let entry: ShadowEntry = "user:$6$hash:-1:0:99999:7:::".parse().unwrap();
+        assert_eq!(entry.last_change, Some(-1));
+    }
+
+    #[test]
+    fn test_parse_max_i64_value() {
+        let max_str = i64::MAX.to_string();
+        let line = format!("user:$6$hash:{max_str}:0:99999:7:::");
+        let entry: ShadowEntry = line.parse().unwrap();
+        assert_eq!(entry.last_change, Some(i64::MAX));
+    }
+
+    #[test]
+    fn test_parse_empty_reserved_field() {
+        let entry: ShadowEntry = "user:$6$hash:19000:0:99999:7:::".parse().unwrap();
+        assert_eq!(entry.reserved, "");
+    }
+
+    #[test]
+    fn test_write_read_roundtrip_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow");
+
+        let entries = vec![
+            ShadowEntry {
+                name: "root".into(),
+                passwd: "$6$hash".into(),
+                last_change: Some(19000),
+                min_age: Some(0),
+                max_age: Some(99999),
+                warn_days: Some(7),
+                inactive_days: None,
+                expire_date: None,
+                reserved: String::new(),
+            },
+            ShadowEntry {
+                name: "svc".into(),
+                passwd: "*".into(),
+                last_change: None,
+                min_age: None,
+                max_age: None,
+                warn_days: None,
+                inactive_days: None,
+                expire_date: None,
+                reserved: String::new(),
+            },
+        ];
+
+        let file = std::fs::File::create(&path).unwrap();
+        write_shadow(&entries, file).unwrap();
+
+        let read_back = read_shadow_file(&path).unwrap();
+        assert_eq!(entries, read_back);
+    }
+
+    #[test]
+    fn test_empty_file_returns_empty_vec() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shadow");
+        std::fs::write(&path, "").unwrap();
+        let entries = read_shadow_file(&path).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #15: proptest round-trip tests
+    // -------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    fn arb_optional_i64() -> impl Strategy<Value = Option<i64>> {
+        prop_oneof![Just(None), (0i64..100_000).prop_map(Some),]
+    }
+
+    fn arb_shadow_entry() -> impl Strategy<Value = ShadowEntry> {
+        (
+            "[a-z_][a-z0-9_-]{0,31}",     // name
+            "(\\*|!|!!|\\$6\\$[a-z]{4})", // passwd
+            arb_optional_i64(),           // last_change
+            arb_optional_i64(),           // min_age
+            arb_optional_i64(),           // max_age
+            arb_optional_i64(),           // warn_days
+            arb_optional_i64(),           // inactive_days
+            arb_optional_i64(),           // expire_date
+        )
+            .prop_map(
+                |(
+                    name,
+                    passwd,
+                    last_change,
+                    min_age,
+                    max_age,
+                    warn_days,
+                    inactive_days,
+                    expire_date,
+                )| {
+                    ShadowEntry {
+                        name,
+                        passwd,
+                        last_change,
+                        min_age,
+                        max_age,
+                        warn_days,
+                        inactive_days,
+                        expire_date,
+                        reserved: String::new(),
+                    }
+                },
+            )
+    }
+
+    proptest! {
+        #[test]
+        fn test_shadow_roundtrip(entry in arb_shadow_entry()) {
+            let line = entry.to_string();
+            let parsed: ShadowEntry = line.parse().unwrap();
+            prop_assert_eq!(parsed, entry);
+        }
+    }
 }

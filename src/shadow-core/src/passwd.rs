@@ -182,4 +182,151 @@ mod tests {
             "root:x:0:0:root:/root:/bin/bash\nnobody:x:65534:65534::/nonexistent:/usr/sbin/nologin\n"
         );
     }
+
+    // -------------------------------------------------------------------
+    // Issue #16: parser edge case tests
+    // -------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_too_few_fields() {
+        let result = "root:x:0:0".parse::<PasswdEntry>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_too_many_fields() {
+        let result = "root:x:0:0:gecos:home:shell:extra".parse::<PasswdEntry>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_empty_line_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("passwd");
+        std::fs::write(
+            &path,
+            "root:x:0:0:root:/root:/bin/bash\n\n\nnobody:x:65534:65534::/nonexistent:/usr/sbin/nologin\n",
+        )
+        .unwrap();
+        let entries = read_passwd_file(&path).unwrap();
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_comment_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("passwd");
+        std::fs::write(
+            &path,
+            "# comment line\nroot:x:0:0:root:/root:/bin/bash\n# another comment\n",
+        )
+        .unwrap();
+        let entries = read_passwd_file(&path).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "root");
+    }
+
+    #[test]
+    fn test_parse_uid_overflow() {
+        let result = "root:x:99999999999:0:root:/root:/bin/bash".parse::<PasswdEntry>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_negative_uid() {
+        let result = "root:x:-1:0:root:/root:/bin/bash".parse::<PasswdEntry>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_empty_name() {
+        // Parsing itself succeeds (field-count is correct), but yields an empty name.
+        let entry: PasswdEntry = ":x:0:0:::".parse().unwrap();
+        assert_eq!(entry.name, "");
+    }
+
+    #[test]
+    fn test_parse_extra_colons_fails() {
+        // 8+ colons means 9+ fields, which must fail.
+        let result = "root:x:0:0:ge:cos:home:shell:extra".parse::<PasswdEntry>();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_write_read_roundtrip_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("passwd");
+
+        let entries = vec![
+            PasswdEntry {
+                name: "root".into(),
+                passwd: "x".into(),
+                uid: 0,
+                gid: 0,
+                gecos: "root".into(),
+                home: "/root".into(),
+                shell: "/bin/bash".into(),
+            },
+            PasswdEntry {
+                name: "nobody".into(),
+                passwd: "x".into(),
+                uid: 65534,
+                gid: 65534,
+                gecos: String::new(),
+                home: "/nonexistent".into(),
+                shell: "/usr/sbin/nologin".into(),
+            },
+        ];
+
+        let file = std::fs::File::create(&path).unwrap();
+        write_passwd(&entries, file).unwrap();
+
+        let read_back = read_passwd_file(&path).unwrap();
+        assert_eq!(entries, read_back);
+    }
+
+    #[test]
+    fn test_empty_file_returns_empty_vec() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("passwd");
+        std::fs::write(&path, "").unwrap();
+        let entries = read_passwd_file(&path).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    // -------------------------------------------------------------------
+    // Issue #15: proptest round-trip tests
+    // -------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    fn arb_passwd_entry() -> impl Strategy<Value = PasswdEntry> {
+        (
+            "[a-z_][a-z0-9_-]{0,31}",               // name
+            "(x|\\*|!|\\$6\\$[a-z]{4})",            // passwd
+            0u32..65535,                            // uid
+            0u32..65535,                            // gid
+            "[A-Za-z0-9 ,.-]{0,50}",                // gecos
+            "/[a-z/]{1,30}",                        // home
+            "/(bin|usr/bin)/(bash|sh|zsh|nologin)", // shell
+        )
+            .prop_map(|(name, passwd, uid, gid, gecos, home, shell)| PasswdEntry {
+                name,
+                passwd,
+                uid,
+                gid,
+                gecos,
+                home,
+                shell,
+            })
+    }
+
+    proptest! {
+        #[test]
+        fn test_passwd_roundtrip(entry in arb_passwd_entry()) {
+            let line = entry.to_string();
+            let parsed: PasswdEntry = line.parse().unwrap();
+            prop_assert_eq!(parsed, entry);
+        }
+    }
 }
