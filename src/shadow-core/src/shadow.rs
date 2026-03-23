@@ -43,6 +43,64 @@ pub struct ShadowEntry {
     pub reserved: String,
 }
 
+impl ShadowEntry {
+    /// Whether the account password is locked (password starts with `!`).
+    #[must_use]
+    pub fn is_locked(&self) -> bool {
+        self.passwd.starts_with('!')
+    }
+
+    /// Whether the account has no password (empty password field).
+    #[must_use]
+    pub fn has_no_password(&self) -> bool {
+        self.passwd.is_empty()
+    }
+
+    /// Lock the password by prepending `!`.
+    pub fn lock(&mut self) {
+        self.passwd.insert(0, '!');
+    }
+
+    /// Unlock the password by removing the leading `!`.
+    ///
+    /// Returns `false` if the password is not locked or would become empty
+    /// after unlocking (GNU passwd refuses this — use `delete` instead).
+    pub fn unlock(&mut self) -> bool {
+        if !self.is_locked() {
+            return false;
+        }
+        let after = &self.passwd[1..];
+        if after.is_empty() || after == "!" {
+            // Would result in empty or still-locked password.
+            return false;
+        }
+        self.passwd = after.to_string();
+        true
+    }
+
+    /// Delete the password (set to empty string, making the account passwordless).
+    pub fn delete_password(&mut self) {
+        self.passwd = String::new();
+    }
+
+    /// Expire the password (set `last_change` to 0, forcing change at next login).
+    pub fn expire(&mut self) {
+        self.last_change = Some(0);
+    }
+
+    /// Password status character for `passwd -S` output.
+    #[must_use]
+    pub fn status_char(&self) -> &'static str {
+        if self.is_locked() {
+            "L"
+        } else if self.has_no_password() {
+            "NP"
+        } else {
+            "P"
+        }
+    }
+}
+
 /// Parse an optional numeric field — empty string becomes `None`.
 fn parse_optional_field(field: &str) -> Result<Option<i64>, ShadowError> {
     if field.is_empty() {

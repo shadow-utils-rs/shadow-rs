@@ -36,4 +36,5 @@ pub mod selinux;
 pub mod atomic;
 pub mod lock;
 pub mod nscd;
+pub mod sysroot;
 pub mod uid_alloc;
