@@ -1,4 +1,7 @@
 /target
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts
 Cargo.lock
 CLAUDE.md
 PLAN-shadow-rs.md
