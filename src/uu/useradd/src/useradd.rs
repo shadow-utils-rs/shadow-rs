@@ -524,10 +524,14 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     // (matching GNU behavior). Locks are held throughout.
     // -------------------------------------------------------------------
 
-    // Step 11: Create user group if needed (lock already held).
+    // Step 11: Create user group if needed (group lock already held).
     if let Some(ref new_grp) = new_group {
         write_new_group(&group_path, &mut group_entries, new_grp)?;
         if gshadow_path.exists() {
+            // Acquire gshadow lock — group.lock does NOT protect gshadow.
+            let _gs_lock = FileLock::acquire(&gshadow_path).map_err(|e| {
+                UseraddError::CannotUpdateGroup(format!("cannot lock gshadow: {e}"))
+            })?;
             write_new_gshadow(&gshadow_path, &mut gshadow_entries, new_grp)?;
         }
     }
