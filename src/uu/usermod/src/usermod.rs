@@ -19,7 +19,7 @@ use shadow_core::lock::FileLock;
 use shadow_core::passwd::{self};
 use shadow_core::shadow::{self};
 use shadow_core::sysroot::SysRoot;
-use shadow_core::{atomic, nscd};
+use shadow_core::{atomic, nscd, validate};
 
 mod options {
     pub const COMMENT: &str = "comment";
@@ -88,7 +88,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let login = matches
         .get_one::<String>(options::USER)
         .expect("USER is required");
-    let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
+    let prefix = matches
+        .get_one::<String>(options::PREFIX)
+        .or_else(|| matches.get_one::<String>(options::ROOT))
+        .map(Path::new);
     let root = SysRoot::new(prefix);
 
     if !nix::unistd::getuid().is_root() {
@@ -134,8 +137,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     if let Some(&gid) = matches.get_one::<u32>(options::GID) {
         entries[idx].gid = gid;
     }
-    if let Some(new_login) = matches.get_one::<String>(options::LOGIN) {
-        entries[idx].name.clone_from(new_login);
+    let new_login = matches.get_one::<String>(options::LOGIN);
+    if let Some(new_name) = new_login {
+        validate::validate_username(new_name)
+            .map_err(|e| UsermodError::CantUpdate(format!("invalid login name: {e}")))?;
+        entries[idx].name.clone_from(new_name);
     }
 
     let new_uid = entries[idx].uid;
@@ -160,7 +166,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let expire = matches.get_one::<String>(options::EXPIREDATE);
     let inactive = matches.get_one::<i64>(options::INACTIVE);
 
-    if shadow_path.exists() && (do_lock || do_unlock || expire.is_some() || inactive.is_some()) {
+    let login_changing = new_login.is_some();
+    if shadow_path.exists()
+        && (do_lock || do_unlock || expire.is_some() || inactive.is_some() || login_changing)
+    {
         let slock = FileLock::acquire(&shadow_path)
             .map_err(|e| UsermodError::CantUpdate(format!("cannot lock shadow: {e}")))?;
 
@@ -175,16 +184,53 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 s.unlock();
             }
             if let Some(exp) = expire {
-                s.expire_date = if exp == "-1" { None } else { exp.parse().ok() };
+                s.expire_date = if exp == "-1" || exp.is_empty() {
+                    None
+                } else {
+                    Some(exp.parse::<i64>().map_err(|_| {
+                        UsermodError::CantUpdate(format!(
+                            "invalid expire date '{exp}' (expected days since epoch)"
+                        ))
+                    })?)
+                };
             }
             if let Some(&i) = inactive {
                 s.inactive_days = if i < 0 { None } else { Some(i) };
+            }
+            if let Some(new_name) = new_login {
+                s.name.clone_from(new_name);
             }
         }
 
         atomic::atomic_write(&shadow_path, |f| shadow::write_shadow(&se, f))
             .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
         drop(slock);
+    }
+
+    // Rename user in group membership lists when --login changes the name.
+    if let Some(new_name) = new_login {
+        let group_path = root.group_path();
+        if group_path.exists() {
+            let glock = FileLock::acquire(&group_path)
+                .map_err(|e| UsermodError::CantUpdate(format!("cannot lock group: {e}")))?;
+
+            let mut ge = group::read_group_file(&group_path)
+                .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+
+            let mut changed = false;
+            for g in &mut ge {
+                if let Some(m) = g.members.iter_mut().find(|m| **m == *login) {
+                    m.clone_from(new_name);
+                    changed = true;
+                }
+            }
+
+            if changed {
+                atomic::atomic_write(&group_path, |f| group::write_group(&ge, f))
+                    .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
+            }
+            drop(glock);
+        }
     }
 
     // Group modifications.

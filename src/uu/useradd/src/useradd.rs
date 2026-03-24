@@ -203,9 +203,16 @@ fn parse_expire_date(s: &str) -> Result<Option<i64>, UseraddError> {
         UseraddError::BadArgument(format!("invalid date '{s}' (expected YYYY-MM-DD)"))
     })?;
 
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || year < 1970 {
+    if !(1..=12).contains(&month) || year < 1970 {
         return Err(UseraddError::BadArgument(format!(
             "invalid date '{s}' (expected YYYY-MM-DD with valid ranges)"
+        )));
+    }
+
+    let max_day = days_in_month(year, month);
+    if !(1..=max_day).contains(&day) {
+        return Err(UseraddError::BadArgument(format!(
+            "invalid date '{s}' (day {day} out of range for month {month})"
         )));
     }
 
@@ -227,6 +234,28 @@ fn days_since_epoch(year: i64, month: i64, day: i64) -> i64 {
     let doy = (153 * m + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
+}
+
+/// Whether `year` is a leap year in the Gregorian calendar.
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+/// Number of days in a given month (1-indexed) for `year`.
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
+        // Month range is already validated before calling this function.
+        _ => 0,
+    }
 }
 
 /// Current date as days since epoch.
@@ -574,7 +603,9 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
 
     // Step 15: Create home directory and copy skel.
     if opts.create_home {
-        create_home_directory(&home_dir, &opts.skel_dir, uid, gid)?;
+        let resolved_home = opts.root.resolve(&home_dir);
+        let resolved_skel = opts.root.resolve(&opts.skel_dir);
+        create_home_directory(&resolved_home, &resolved_skel, uid, gid)?;
     }
 
     // Step 16: Invalidate nscd caches.
@@ -809,22 +840,23 @@ fn add_to_supplementary_groups(
 // ---------------------------------------------------------------------------
 
 /// Create the home directory and copy skeleton files.
-fn create_home_directory(home_dir: &str, skel_dir: &str, uid: u32, gid: u32) -> UResult<()> {
-    let home_path = Path::new(home_dir);
-
+///
+/// Paths must already be resolved through `SysRoot` by the caller.
+fn create_home_directory(home_path: &Path, skel_path: &Path, uid: u32, gid: u32) -> UResult<()> {
     // Use create_dir (not create_dir_all) to avoid TOCTOU between exists() and mkdir().
     match std::fs::create_dir(home_path) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             uucore::show_warning!(
                 "home directory '{}' already exists -- not copying from skel directory",
-                home_dir
+                home_path.display()
             );
             return Ok(());
         }
         Err(e) => {
             return Err(UseraddError::CannotCreateHome(format!(
-                "cannot create directory '{home_dir}': {e}"
+                "cannot create directory '{}': {e}",
+                home_path.display()
             ))
             .into());
         }
@@ -832,19 +864,26 @@ fn create_home_directory(home_dir: &str, skel_dir: &str, uid: u32, gid: u32) -> 
 
     // Set permissions to 0700 (home directories should be private by default).
     std::fs::set_permissions(home_path, std::fs::Permissions::from_mode(0o700)).map_err(|e| {
-        UseraddError::CannotCreateHome(format!("cannot set permissions on '{home_dir}': {e}"))
+        UseraddError::CannotCreateHome(format!(
+            "cannot set permissions on '{}': {e}",
+            home_path.display()
+        ))
     })?;
 
     // Set ownership.
     std::os::unix::fs::chown(home_path, Some(uid), Some(gid)).map_err(|e| {
-        UseraddError::CannotCreateHome(format!("cannot set ownership on '{home_dir}': {e}"))
+        UseraddError::CannotCreateHome(format!(
+            "cannot set ownership on '{}': {e}",
+            home_path.display()
+        ))
     })?;
 
     // Copy skeleton directory contents.
-    let skel_path = Path::new(skel_dir);
     skel::copy_skel(skel_path, home_path, uid, gid).map_err(|e| {
         UseraddError::CannotCreateHome(format!(
-            "cannot copy skel '{skel_dir}' to '{home_dir}': {e}"
+            "cannot copy skel '{}' to '{}': {e}",
+            skel_path.display(),
+            home_path.display()
         ))
     })?;
 
@@ -1251,6 +1290,48 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_expire_date_feb_31() {
+        assert!(parse_expire_date("2025-02-31").is_err());
+    }
+
+    #[test]
+    fn test_parse_expire_date_feb_29_non_leap() {
+        assert!(parse_expire_date("2025-02-29").is_err());
+    }
+
+    #[test]
+    fn test_parse_expire_date_feb_29_leap() {
+        assert!(parse_expire_date("2024-02-29").is_ok());
+    }
+
+    #[test]
+    fn test_parse_expire_date_apr_31() {
+        assert!(parse_expire_date("2025-04-31").is_err());
+    }
+
+    #[test]
+    fn test_parse_expire_date_apr_30() {
+        assert!(parse_expire_date("2025-04-30").is_ok());
+    }
+
+    #[test]
+    fn test_is_leap_year() {
+        assert!(is_leap_year(2000));
+        assert!(is_leap_year(2024));
+        assert!(!is_leap_year(1900));
+        assert!(!is_leap_year(2023));
+    }
+
+    #[test]
+    fn test_days_in_month_values() {
+        assert_eq!(days_in_month(2025, 1), 31);
+        assert_eq!(days_in_month(2025, 2), 28);
+        assert_eq!(days_in_month(2024, 2), 29);
+        assert_eq!(days_in_month(2025, 4), 30);
+        assert_eq!(days_in_month(2025, 12), 31);
+    }
+
+    #[test]
     fn test_days_since_epoch_known_dates() {
         // 1970-01-01 = day 0
         assert_eq!(days_since_epoch(1970, 1, 1), 0);
@@ -1605,12 +1686,14 @@ mod tests {
         let home = dir.path().join("home/testuser");
         let skel = dir.path().join("skel");
 
+        // Parent of home must exist (create_dir is intentionally used, not create_dir_all).
+        fs::create_dir_all(dir.path().join("home")).expect("create home parent");
+
         // Create skeleton directory with a file.
         fs::create_dir_all(&skel).expect("create skel");
         fs::write(skel.join(".bashrc"), "# bashrc\n").expect("write bashrc");
 
-        create_home_directory(&home.to_string_lossy(), &skel.to_string_lossy(), 1000, 1000)
-            .expect("create home");
+        create_home_directory(&home, &skel, 1000, 1000).expect("create home");
 
         assert!(home.exists());
         assert!(home.join(".bashrc").exists());
@@ -1632,7 +1715,7 @@ mod tests {
         fs::create_dir_all(&home).expect("create home");
 
         // Should succeed with a warning, not copy skel.
-        create_home_directory(&home.to_string_lossy(), "/nonexistent/skel", 1000, 1000)
+        create_home_directory(&home, Path::new("/nonexistent/skel"), 1000, 1000)
             .expect("should succeed for existing home");
     }
 

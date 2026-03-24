@@ -85,8 +85,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let login = matches
         .get_one::<String>(options::LOGIN)
         .expect("LOGIN is required");
-    let remove_home = matches.get_flag(options::REMOVE) || matches.get_flag(options::FORCE);
-    let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
+    let remove_home = matches.get_flag(options::REMOVE);
+    let prefix = matches
+        .get_one::<String>(options::PREFIX)
+        .or_else(|| matches.get_one::<String>(options::ROOT))
+        .map(Path::new);
     let root = SysRoot::new(prefix);
 
     // Must be root.

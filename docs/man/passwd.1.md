@@ -1,0 +1,104 @@
+# passwd(1) - change user password
+
+## NAME
+
+passwd - change user password
+
+## SYNOPSIS
+
+**passwd** [*options*] [*LOGIN*]
+
+## DESCRIPTION
+
+The **passwd** command changes passwords for user accounts. A normal user
+may only change the password for their own account; the superuser may
+change the password for any account. **passwd** also changes the account
+or associated password validity period.
+
+When invoked without a LOGIN argument, **passwd** changes the password for
+the current user.
+
+## OPTIONS
+
+**-a**, **--all**
+:   Report password status on all accounts. Requires **-S**.
+
+**-d**, **--delete**
+:   Delete the password for the named account. This makes the account
+    passwordless.
+
+**-e**, **--expire**
+:   Immediately expire the password for the named account. This forces
+    the user to change their password at next login.
+
+**-i**, **--inactive** *INACTIVE*
+:   Set the number of days of inactivity after a password has expired
+    before the account is locked.
+
+**-k**, **--keep-tokens**
+:   Change password only if expired.
+
+**-l**, **--lock**
+:   Lock the password of the named account. This prepends a '!' to the
+    encrypted password, effectively disabling the password.
+
+**-n**, **--mindays** *MIN_DAYS*
+:   Set the minimum number of days between password changes.
+
+**-q**, **--quiet**
+:   Quiet mode.
+
+**-r**, **--repository** *REPOSITORY*
+:   Change password in the named repository.
+
+**-R**, **--root** *CHROOT_DIR*
+:   Apply changes in the *CHROOT_DIR* directory and use the configuration
+    files from the *CHROOT_DIR* directory.
+
+**-P**, **--prefix** *PREFIX_DIR*
+:   Use *PREFIX_DIR* as a prefix for system file paths.
+
+**-S**, **--status**
+:   Display account status information. The status information consists
+    of 7 fields: login name, password status (L=locked, NP=no password,
+    P=usable password), date of last password change, minimum age,
+    maximum age, warning period, and inactivity period.
+
+**-s**, **--stdin**
+:   Read the new password token from standard input.
+
+**-u**, **--unlock**
+:   Unlock the password of the named account. This removes the '!' prefix
+    from the encrypted password.
+
+**-w**, **--warndays** *WARN_DAYS*
+:   Set the number of days of warning before a password change is required.
+
+**-x**, **--maxdays** *MAX_DAYS*
+:   Set the maximum number of days a password remains valid.
+
+## EXIT STATUS
+
+**0**
+:   Success.
+
+**1**
+:   Permission denied or operation failed.
+
+**2**
+:   Invalid command syntax.
+
+**5**
+:   Password file busy.
+
+## FILES
+
+/etc/passwd
+:   User account information.
+
+/etc/shadow
+:   Secure user account information.
+
+## SEE ALSO
+
+chage(1), chpasswd(8), login.defs(5), shadow(5), pwck(8)
