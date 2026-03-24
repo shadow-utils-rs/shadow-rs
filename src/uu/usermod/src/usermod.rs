@@ -298,7 +298,7 @@ fn recursive_chown(path: &Path, old_uid: u32, new_uid: u32) {
             if let Ok(meta) = std::fs::symlink_metadata(&entry_path) {
                 if meta.uid() == old_uid {
                     let _ = nix::unistd::fchownat(
-                        None::<std::os::unix::io::RawFd>,
+                        nix::fcntl::AT_FDCWD,
                         &entry_path,
                         Some(nix::unistd::Uid::from_raw(new_uid)),
                         None,
@@ -316,7 +316,7 @@ fn recursive_chown(path: &Path, old_uid: u32, new_uid: u32) {
         && meta.uid() == old_uid
     {
         let _ = nix::unistd::fchownat(
-            None::<std::os::unix::io::RawFd>,
+            nix::fcntl::AT_FDCWD,
             path,
             Some(nix::unistd::Uid::from_raw(new_uid)),
             None,
