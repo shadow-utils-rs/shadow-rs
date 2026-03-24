@@ -9,11 +9,10 @@
 //! hostile callers. These functions implement the standard hardening
 //! steps that all tools share.
 
-/// Suppress core dumps (`RLIMIT_CORE=0`) and prevent ptrace attachment.
+/// Suppress core dumps via `RLIMIT_CORE=0`.
 ///
 /// A core dump from a setuid-root process could expose password hashes
-/// and plaintext passwords. `PR_SET_DUMPABLE=0` also prevents
-/// `/proc/pid/mem` reads by other processes.
+/// and plaintext passwords.
 pub fn suppress_core_dumps() {
     let _ = nix::sys::resource::setrlimit(nix::sys::resource::Resource::RLIMIT_CORE, 0, 0);
     // PR_SET_DUMPABLE via nix::sys::prctl (no raw unsafe needed).
@@ -38,15 +37,12 @@ pub fn raise_file_size_limit() {
 /// Clears all environment variables except essential ones (`TERM`, `LANG`,
 /// `LC_*`) and sets `PATH` to a safe default. Prevents environment variable
 /// injection attacks (`LD_PRELOAD`, `IFS`, `CDPATH`, etc.).
-/// Sanitize the environment by re-execing ourselves with a clean env.
+/// Build a sanitized environment for child process spawning.
 ///
-/// Instead of using `set_var`/`remove_var` (unsafe in edition 2024),
-/// we record the sanitized environment and let the caller pass it
-/// to any child processes via `Command::env_clear().envs(...)`.
-///
-/// Returns the sanitized environment as key-value pairs. The current
-/// process environment is NOT modified (that would require unsafe).
-/// Tools should use the returned env when spawning subprocesses.
+/// Returns safe key-value pairs (PATH + TERM/LANG/LC_*). The current
+/// process environment is NOT modified (`set_var` is unsafe in edition
+/// 2024). Pass the returned Vec to `Command::env_clear().envs(...)`
+/// when spawning subprocesses.
 pub fn sanitized_env() -> Vec<(String, String)> {
     let mut env = Vec::new();
     env.push((

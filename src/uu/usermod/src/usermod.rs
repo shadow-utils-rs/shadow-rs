@@ -263,10 +263,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 }
             }
             for gname in &new_groups {
-                if let Some(g) = ge.iter_mut().find(|g| g.name == *gname) {
-                    if !g.members.iter().any(|m| m == login) {
-                        g.members.push(login.clone());
-                    }
+                if let Some(g) = ge.iter_mut().find(|g| g.name == *gname)
+                    && !g.members.iter().any(|m| m == login)
+                {
+                    g.members.push(login.clone());
                 }
             }
 

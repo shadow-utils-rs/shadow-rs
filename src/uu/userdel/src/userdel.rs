@@ -134,11 +134,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // 5. Optionally remove home directory (using the path saved from passwd).
     if remove_home {
-        if let Some(ref home_dir) = saved_home {
-            if !home_dir.is_empty() {
-                let home = root.resolve(home_dir);
-                safe_remove_home(&home)?;
-            }
+        if let Some(ref home_dir) = saved_home
+            && !home_dir.is_empty()
+        {
+            let home = root.resolve(home_dir);
+            safe_remove_home(&home)?;
         }
 
         // Remove mail spool.
@@ -240,21 +240,18 @@ fn safe_remove_home(home: &Path) -> Result<(), UserdelError> {
     }
 
     // Refuse to remove a mount point (device ID differs from parent).
-    if let Some(parent) = home.parent() {
-        if parent.exists() {
-            use std::os::unix::fs::MetadataExt;
-            let parent_meta = std::fs::metadata(parent).map_err(|e| {
-                UserdelError::CantRemoveHome(format!(
-                    "cannot stat parent of '{}': {e}",
-                    home.display()
-                ))
-            })?;
-            if meta.dev() != parent_meta.dev() {
-                return Err(UserdelError::CantRemoveHome(format!(
-                    "refusing to remove mount point at '{}'",
-                    home.display()
-                )));
-            }
+    if let Some(parent) = home.parent()
+        && parent.exists()
+    {
+        use std::os::unix::fs::MetadataExt;
+        let parent_meta = std::fs::metadata(parent).map_err(|e| {
+            UserdelError::CantRemoveHome(format!("cannot stat parent of '{}': {e}", home.display()))
+        })?;
+        if meta.dev() != parent_meta.dev() {
+            return Err(UserdelError::CantRemoveHome(format!(
+                "refusing to remove mount point at '{}'",
+                home.display()
+            )));
         }
     }
 
@@ -306,11 +303,11 @@ where
             continue;
         }
 
-        if let Ok(entry) = line.parse::<T>() {
-            if entry.name() == login {
-                found = true;
-                continue; // skip this entry
-            }
+        if let Ok(entry) = line.parse::<T>()
+            && entry.name() == login
+        {
+            found = true;
+            continue; // skip this entry
         }
         kept_lines.push(line.to_string());
     }

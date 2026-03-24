@@ -33,6 +33,7 @@ pub mod subid;
 #[allow(unsafe_code)]
 pub mod pam;
 
+#[cfg(feature = "crypt")]
 #[allow(unsafe_code)]
 pub mod crypt;
 

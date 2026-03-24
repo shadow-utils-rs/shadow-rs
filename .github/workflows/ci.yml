@@ -41,6 +41,16 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev pkg-config libcrypt-dev
       - run: cargo test --workspace
 
+  msrv:
+    name: MSRV (1.94.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.94.0
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libpam0g-dev libselinux1-dev libaudit-dev pkg-config libcrypt-dev
+      - run: cargo check --workspace
+
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest

@@ -506,16 +506,12 @@ fn check_shadow_entries(
         }
 
         // Check 11: Shadow last_change is not in the future (warning).
-        if !quiet {
-            if let Some(last_change) = entry.last_change {
-                if last_change > today_days {
-                    uucore::show_warning!(
-                        "user '{}': last password change in the future",
-                        entry.name
-                    );
-                    warnings += 1;
-                }
-            }
+        if !quiet
+            && let Some(last_change) = entry.last_change
+            && last_change > today_days
+        {
+            uucore::show_warning!("user '{}': last password change in the future", entry.name);
+            warnings += 1;
         }
     }
 

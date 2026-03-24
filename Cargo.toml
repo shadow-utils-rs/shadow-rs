@@ -33,7 +33,7 @@ members = [
 [workspace.package]
 version = "0.0.1"
 edition = "2024"
-rust-version = "1.85.0"
+rust-version = "1.94.0"
 license = "MIT"
 authors = ["shadow-rs contributors"]
 repository = "https://github.com/shadow-utils-rs/shadow-rs"

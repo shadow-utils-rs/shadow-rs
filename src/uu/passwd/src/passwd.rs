@@ -504,10 +504,11 @@ impl Drop for PrivDrop {
     }
 }
 
-// Note: signal handler removed — it required unsafe (sigaction + libc::write
-// + libc::_exit). The EchoGuard RAII drop already restores terminal echo on
-// any exit path including Ctrl+C (Rust runs destructors on panic). The
-// "Password unchanged." message was cosmetic, not security-critical.
+// Note: custom SIGINT handler removed — it required unsafe (sigaction +
+// libc::write + libc::_exit). SIGINT terminates without unwinding, so
+// EchoGuard::drop won't run. Terminal echo restoration after Ctrl+C relies
+// on the terminal driver resetting on process exit (standard behavior).
+// The "Password unchanged." message was cosmetic, not security-critical.
 
 /// Default operation: change password via PAM.
 ///
