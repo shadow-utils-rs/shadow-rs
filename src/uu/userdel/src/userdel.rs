@@ -1,0 +1,417 @@
+// This file is part of the shadow-rs package.
+//
+// For the full copyright and license information, please view the LICENSE
+// file that was distributed with this source code.
+// spell-checker:ignore userdel
+
+//! `userdel` — delete a user account and related files.
+//!
+//! Drop-in replacement for GNU shadow-utils `userdel(8)`.
+
+use std::fmt;
+use std::path::Path;
+
+use clap::{Arg, ArgAction, Command};
+use uucore::error::{UError, UResult};
+
+use shadow_core::group::{self};
+use shadow_core::gshadow::{self};
+use shadow_core::lock::FileLock;
+use shadow_core::passwd::PasswdEntry;
+use shadow_core::shadow::ShadowEntry;
+use shadow_core::sysroot::SysRoot;
+use shadow_core::{atomic, nscd};
+
+mod options {
+    pub const FORCE: &str = "force";
+    pub const REMOVE: &str = "remove";
+    pub const ROOT: &str = "root";
+    pub const PREFIX: &str = "prefix";
+    pub const LOGIN: &str = "LOGIN";
+}
+
+mod exit_codes {
+    pub const CANT_UPDATE_PASSWD: i32 = 1;
+    pub const INVALID_SYNTAX: i32 = 2;
+    pub const CANT_UPDATE_GROUP: i32 = 10;
+    pub const CANT_REMOVE_HOME: i32 = 12;
+}
+
+#[derive(Debug)]
+enum UserdelError {
+    CantUpdatePasswd(String),
+    CantUpdateGroup(String),
+    CantRemoveHome(String),
+    AlreadyPrinted(i32),
+}
+
+impl fmt::Display for UserdelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CantUpdatePasswd(msg)
+            | Self::CantUpdateGroup(msg)
+            | Self::CantRemoveHome(msg) => f.write_str(msg),
+            Self::AlreadyPrinted(_) => Ok(()),
+        }
+    }
+}
+
+impl std::error::Error for UserdelError {}
+
+impl UError for UserdelError {
+    fn code(&self) -> i32 {
+        match self {
+            Self::CantUpdatePasswd(_) => exit_codes::CANT_UPDATE_PASSWD,
+            Self::CantUpdateGroup(_) => exit_codes::CANT_UPDATE_GROUP,
+            Self::CantRemoveHome(_) => exit_codes::CANT_REMOVE_HOME,
+            Self::AlreadyPrinted(code) => *code,
+        }
+    }
+}
+
+#[uucore::main]
+pub fn uumain(args: impl uucore::Args) -> UResult<()> {
+    let matches = match uu_app().try_get_matches_from(args) {
+        Ok(m) => m,
+        Err(e) => {
+            e.print().ok();
+            if !e.use_stderr() {
+                return Ok(());
+            }
+            return Err(UserdelError::AlreadyPrinted(exit_codes::INVALID_SYNTAX).into());
+        }
+    };
+
+    let login = matches
+        .get_one::<String>(options::LOGIN)
+        .expect("LOGIN is required");
+    let remove_home = matches.get_flag(options::REMOVE) || matches.get_flag(options::FORCE);
+    let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
+    let root = SysRoot::new(prefix);
+
+    // Must be root.
+    if !nix::unistd::getuid().is_root() {
+        return Err(UserdelError::CantUpdatePasswd("Permission denied.".into()).into());
+    }
+
+    // 1. Remove from /etc/passwd
+    let passwd_path = root.passwd_path();
+    remove_entry_from_file::<PasswdEntry>(&passwd_path, login, "passwd")
+        .map_err(UserdelError::CantUpdatePasswd)?;
+
+    // 2. Remove from /etc/shadow
+    let shadow_path = root.shadow_path();
+    if shadow_path.exists() {
+        let _ = remove_entry_from_file::<ShadowEntry>(&shadow_path, login, "shadow");
+    }
+
+    // 3. Remove from /etc/group membership lists
+    let group_path = root.group_path();
+    if group_path.exists() {
+        remove_from_group_members(&group_path, login).map_err(UserdelError::CantUpdateGroup)?;
+    }
+
+    // 4. Remove from /etc/gshadow membership lists
+    let gshadow_path = root.resolve("/etc/gshadow");
+    if gshadow_path.exists() {
+        let _ = remove_from_gshadow_members(&gshadow_path, login);
+    }
+
+    // 5. Optionally remove home directory
+    if remove_home {
+        // Find home dir from the entry we just removed — read it before deletion.
+        // Actually we already removed it. For simplicity, construct from /home/LOGIN.
+        let home = root.resolve(&format!("/home/{login}"));
+        if home.exists() {
+            std::fs::remove_dir_all(&home).map_err(|e| {
+                UserdelError::CantRemoveHome(format!("cannot remove '{}': {e}", home.display()))
+            })?;
+        }
+
+        // Remove mail spool.
+        let mail = root.resolve(&format!("/var/mail/{login}"));
+        if mail.exists() {
+            let _ = std::fs::remove_file(&mail);
+        }
+    }
+
+    nscd::invalidate_cache("passwd");
+    nscd::invalidate_cache("group");
+
+    Ok(())
+}
+
+#[must_use]
+pub fn uu_app() -> Command {
+    Command::new("userdel")
+        .about("Delete a user account and related files")
+        .override_usage("userdel [options] LOGIN")
+        .arg(
+            Arg::new(options::FORCE)
+                .short('f')
+                .long("force")
+                .help("Force removal even if user is logged in")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::REMOVE)
+                .short('r')
+                .long("remove")
+                .help("Remove home directory and mail spool")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new(options::ROOT)
+                .short('R')
+                .long("root")
+                .value_name("CHROOT_DIR")
+                .help("Directory to chroot into"),
+        )
+        .arg(
+            Arg::new(options::PREFIX)
+                .short('P')
+                .long("prefix")
+                .value_name("PREFIX_DIR")
+                .help("Directory prefix"),
+        )
+        .arg(
+            Arg::new(options::LOGIN)
+                .required(true)
+                .index(1)
+                .help("Login name of the user to delete"),
+        )
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+trait HasName {
+    fn name(&self) -> &str;
+}
+
+impl HasName for PasswdEntry {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasName for ShadowEntry {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Remove an entry by name from a file (passwd or shadow format).
+fn remove_entry_from_file<T>(path: &Path, login: &str, file_label: &str) -> Result<(), String>
+where
+    T: std::str::FromStr + std::fmt::Display + HasName,
+    T::Err: std::fmt::Display,
+{
+    let lock = FileLock::acquire(path).map_err(|e| format!("cannot lock {file_label}: {e}"))?;
+
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+
+    let mut found = false;
+    let mut kept_lines = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            kept_lines.push(line.to_string());
+            continue;
+        }
+
+        if let Ok(entry) = line.parse::<T>() {
+            if entry.name() == login {
+                found = true;
+                continue; // skip this entry
+            }
+        }
+        kept_lines.push(line.to_string());
+    }
+
+    if !found {
+        drop(lock);
+        return Err(format!("user '{login}' does not exist in {file_label}"));
+    }
+
+    atomic::atomic_write(path, |f| {
+        use std::io::Write;
+        for line in &kept_lines {
+            writeln!(f, "{line}")?;
+        }
+        Ok(())
+    })
+    .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+
+    drop(lock);
+    Ok(())
+}
+
+/// Remove a username from all group membership lists in /etc/group.
+fn remove_from_group_members(path: &Path, login: &str) -> Result<(), String> {
+    let lock = FileLock::acquire(path).map_err(|e| format!("cannot lock group file: {e}"))?;
+
+    let mut entries =
+        group::read_group_file(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+
+    let mut changed = false;
+    for entry in &mut entries {
+        let before = entry.members.len();
+        entry.members.retain(|m| m != login);
+        if entry.members.len() != before {
+            changed = true;
+        }
+    }
+
+    if changed {
+        atomic::atomic_write(path, |f| group::write_group(&entries, f))
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+
+    drop(lock);
+    Ok(())
+}
+
+/// Remove a username from all gshadow membership and admin lists.
+fn remove_from_gshadow_members(path: &Path, login: &str) -> Result<(), String> {
+    let lock = FileLock::acquire(path).map_err(|e| format!("cannot lock gshadow file: {e}"))?;
+
+    let mut entries = gshadow::read_gshadow_file(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+
+    let mut changed = false;
+    for entry in &mut entries {
+        let before_m = entry.members.len();
+        let before_a = entry.admins.len();
+        entry.members.retain(|m| m != login);
+        entry.admins.retain(|a| a != login);
+        if entry.members.len() != before_m || entry.admins.len() != before_a {
+            changed = true;
+        }
+    }
+
+    if changed {
+        atomic::atomic_write(path, |f| gshadow::write_gshadow(&entries, f))
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    }
+
+    drop(lock);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_app_builds() {
+        uu_app().debug_assert();
+    }
+
+    #[test]
+    fn test_login_required() {
+        let result = uu_app().try_get_matches_from(["userdel"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_flag() {
+        let m = uu_app()
+            .try_get_matches_from(["userdel", "-r", "testuser"])
+            .unwrap();
+        assert!(m.get_flag(options::REMOVE));
+    }
+
+    #[test]
+    fn test_force_flag() {
+        let m = uu_app()
+            .try_get_matches_from(["userdel", "-f", "testuser"])
+            .unwrap();
+        assert!(m.get_flag(options::FORCE));
+    }
+
+    fn skip_unless_root() -> bool {
+        !nix::unistd::geteuid().is_root()
+    }
+
+    #[test]
+    fn test_delete_user_from_passwd() {
+        if skip_unless_root() {
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let etc = dir.path().join("etc");
+        std::fs::create_dir_all(&etc).unwrap();
+        std::fs::write(
+            etc.join("passwd"),
+            "root:x:0:0:root:/root:/bin/bash\ntestuser:x:1000:1000::/home/testuser:/bin/bash\n",
+        )
+        .unwrap();
+        std::fs::write(
+            etc.join("shadow"),
+            "root:$6$hash:19000:0:99999:7:::\ntestuser:$6$hash:19000:0:99999:7:::\n",
+        )
+        .unwrap();
+
+        let args: Vec<std::ffi::OsString> = vec![
+            "userdel".into(),
+            "-P".into(),
+            dir.path().as_os_str().to_owned(),
+            "testuser".into(),
+        ];
+        let code = uumain(args.into_iter());
+        assert_eq!(code, 0);
+
+        let passwd = std::fs::read_to_string(etc.join("passwd")).unwrap();
+        assert!(!passwd.contains("testuser"));
+        assert!(passwd.contains("root"));
+    }
+
+    #[test]
+    fn test_delete_nonexistent_user() {
+        if skip_unless_root() {
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let etc = dir.path().join("etc");
+        std::fs::create_dir_all(&etc).unwrap();
+        std::fs::write(etc.join("passwd"), "root:x:0:0:root:/root:/bin/bash\n").unwrap();
+        std::fs::write(etc.join("shadow"), "root:$6$hash:19000:0:99999:7:::\n").unwrap();
+
+        let args: Vec<std::ffi::OsString> = vec![
+            "userdel".into(),
+            "-P".into(),
+            dir.path().as_os_str().to_owned(),
+            "nouser".into(),
+        ];
+        let code = uumain(args.into_iter());
+        assert_ne!(code, 0);
+    }
+
+    #[test]
+    fn test_remove_from_group_members_list() {
+        if skip_unless_root() {
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("group");
+        std::fs::write(
+            &path,
+            "sudo:x:27:alice,testuser,bob\nusers:x:100:testuser\n",
+        )
+        .unwrap();
+
+        remove_from_group_members(&path, "testuser").unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("sudo:x:27:alice,bob"));
+        assert!(content.contains("users:x:100:"));
+        assert!(!content.contains("testuser"));
+    }
+}

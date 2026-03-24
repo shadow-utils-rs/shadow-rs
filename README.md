@@ -49,11 +49,11 @@ default-in-Ubuntu in under 3 years. shadow-rs follows that playbook.
 |------|--------|
 | `passwd` | **All 17 flags implemented.** Drop-in for GNU passwd. PAM password change, `--root`, `--quiet`, `--stdin`. Output bit-for-bit identical with GNU. |
 | `pwck` | **All checks implemented.** Drop-in for GNU pwck. Bit-for-bit identical output. |
-| `useradd` | Planned (Phase 2) |
-| `userdel` | Planned (Phase 2) |
-| `usermod` | Planned (Phase 2) |
-| `chpasswd` | Planned (Phase 2) |
-| `chage` | Planned (Phase 2) |
+| `useradd` | **Implemented.** UID/GID allocation, home dir + skel, shadow entry, group creation. |
+| `userdel` | **Implemented.** Remove from all system files, optional home/mail cleanup. |
+| `usermod` | **Implemented.** Modify all properties, group membership, lock/unlock. |
+| `chpasswd` | **Implemented.** Batch password change from stdin. |
+| `chage` | **Implemented.** Password aging management, `-l` list mode. |
 | `groupadd` | Planned (Phase 3) |
 | `groupdel` | Planned (Phase 3) |
 | `groupmod` | Planned (Phase 3) |

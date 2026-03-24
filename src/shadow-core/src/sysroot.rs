@@ -55,10 +55,34 @@ impl SysRoot {
         self.resolve("/etc/group")
     }
 
+    /// Path to `/etc/gshadow`.
+    #[must_use]
+    pub fn gshadow_path(&self) -> PathBuf {
+        self.resolve("/etc/gshadow")
+    }
+
     /// Path to `/etc/login.defs`.
     #[must_use]
     pub fn login_defs_path(&self) -> PathBuf {
         self.resolve("/etc/login.defs")
+    }
+
+    /// Path to `/etc/subuid`.
+    #[must_use]
+    pub fn subuid_path(&self) -> PathBuf {
+        self.resolve("/etc/subuid")
+    }
+
+    /// Path to `/etc/subgid`.
+    #[must_use]
+    pub fn subgid_path(&self) -> PathBuf {
+        self.resolve("/etc/subgid")
+    }
+
+    /// Path to `/etc/skel`.
+    #[must_use]
+    pub fn skel_path(&self) -> PathBuf {
+        self.resolve("/etc/skel")
     }
 }
 
