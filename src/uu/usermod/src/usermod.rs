@@ -14,6 +14,7 @@ use std::path::Path;
 use clap::{Arg, ArgAction, Command};
 use uucore::error::{UError, UResult};
 
+use shadow_core::audit;
 use shadow_core::group::{self};
 use shadow_core::lock::FileLock;
 use shadow_core::passwd::{self};
@@ -280,6 +281,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     nscd::invalidate_cache("passwd");
     nscd::invalidate_cache("group");
+
+    audit::log_user_event("MOD_USER", login, new_uid, true);
+
     Ok(())
 }
 

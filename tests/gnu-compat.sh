@@ -6,7 +6,7 @@
 set -euo pipefail
 PASS=0; FAIL=0; SKIP=0
 
-cargo build --release 2>/dev/null
+cargo build --release --workspace 2>/dev/null
 RS=./target/release
 
 compare() {
@@ -28,8 +28,8 @@ compare() {
 compare_exit() {
     local name="$1" our_cmd="$2" gnu_cmd="$3"
     local our_rc gnu_rc
-    eval "$our_cmd" >/dev/null 2>&1; our_rc=$?
-    eval "$gnu_cmd" >/dev/null 2>&1; gnu_rc=$?
+    our_rc=0; eval "$our_cmd" >/dev/null 2>&1 || our_rc=$?
+    gnu_rc=0; eval "$gnu_cmd" >/dev/null 2>&1 || gnu_rc=$?
     if [ "$our_rc" = "$gnu_rc" ]; then
         echo "  PASS: $name (exit $our_rc)"
         ((PASS++))

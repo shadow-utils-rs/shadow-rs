@@ -12,6 +12,8 @@
 
 use std::process::Command;
 
+use crate::hardening;
+
 /// Invalidate the `nscd` and `sssd` caches for the given database.
 ///
 /// The `database` should be one of `"passwd"`, `"shadow"`, or `"group"`.
@@ -23,15 +25,14 @@ use std::process::Command;
 /// caller's full (potentially tainted) env from leaking into child processes
 /// running in a setuid context.
 pub fn invalidate_cache(database: &str) {
-    // Minimal, known-safe environment for child processes.
-    let clean_env = [("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")];
+    let safe_env = hardening::sanitized_env();
 
     // Use absolute paths to avoid PATH-based lookups in setuid context.
     let _ = Command::new("/usr/sbin/nscd")
         .arg("-i")
         .arg(database)
         .env_clear()
-        .envs(clean_env)
+        .envs(safe_env.iter().map(|(k, v)| (k, v)))
         .status();
 
     // sssd: sss_cache with the appropriate flag
@@ -43,6 +44,6 @@ pub fn invalidate_cache(database: &str) {
     let _ = Command::new("/usr/sbin/sss_cache")
         .arg(flag)
         .env_clear()
-        .envs(clean_env)
+        .envs(safe_env.iter().map(|(k, v)| (k, v)))
         .status();
 }

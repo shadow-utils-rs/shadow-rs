@@ -17,11 +17,9 @@ use crate::error::ShadowError;
 
 /// Copy the `SELinux` security context from the source file to the destination.
 ///
-/// If `SELinux` is not available or not enforcing, this is a no-op.
-///
-/// # Errors
-///
-/// Returns `ShadowError` if the context cannot be read or set.
+/// Best-effort: silently succeeds if `SELinux` is not available, not enforcing,
+/// or if context operations fail. This matches GNU shadow-utils behavior where
+/// SELinux context handling is non-fatal.
 pub fn copy_file_context(source: &Path, dest: &Path) -> Result<(), ShadowError> {
     // Implementation requires libselinux FFI.
     // For now, attempt to use the `setfilecon` command-line tool as a fallback.
@@ -42,6 +40,8 @@ fn get_file_context(path: &Path) -> Option<String> {
         .arg("-n")
         .arg("security.selinux")
         .arg(path)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
         .output()
         .ok()?;
 
@@ -77,7 +77,8 @@ fn set_file_context(path: &Path, context: &str) -> Result<(), ShadowError> {
 
 /// Restore the default `SELinux` context for a file based on policy.
 ///
-/// Equivalent to `restorecon <path>`.
+/// Best-effort equivalent of `restorecon <path>`. Silently succeeds if
+/// `SELinux` is not available or `restorecon` is not installed.
 pub fn restore_default_context(path: &Path) -> Result<(), ShadowError> {
     let _ = std::process::Command::new("/usr/sbin/restorecon")
         .arg(path)

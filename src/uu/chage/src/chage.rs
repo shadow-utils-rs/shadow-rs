@@ -1025,6 +1025,46 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
+    fn test_reject_feb_29_non_leap_year() {
+        assert!(
+            parse_yyyy_mm_dd("2025-02-29").is_err(),
+            "2025 is not a leap year, Feb 29 should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_reject_feb_31() {
+        assert!(
+            parse_yyyy_mm_dd("2025-02-31").is_err(),
+            "February never has 31 days"
+        );
+    }
+
+    #[test]
+    fn test_accept_feb_29_leap_year() {
+        assert!(
+            parse_yyyy_mm_dd("2024-02-29").is_ok(),
+            "2024 is a leap year, Feb 29 should be accepted"
+        );
+    }
+
+    #[test]
+    fn test_reject_apr_31() {
+        assert!(
+            parse_yyyy_mm_dd("2025-04-31").is_err(),
+            "April has 30 days, day 31 should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_accept_jan_31() {
+        assert!(
+            parse_yyyy_mm_dd("2025-01-31").is_ok(),
+            "January has 31 days, should be accepted"
+        );
+    }
+
+    #[test]
     fn test_exit_code_constants() {
         assert_eq!(exit_codes::SUCCESS, 0);
         assert_eq!(exit_codes::PERMISSION_DENIED, 1);

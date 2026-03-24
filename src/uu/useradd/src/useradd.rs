@@ -20,6 +20,7 @@ use std::path::Path;
 use clap::{Arg, ArgAction, Command};
 
 use shadow_core::atomic;
+use shadow_core::audit;
 use shadow_core::group::{self, GroupEntry};
 use shadow_core::gshadow::{self, GshadowEntry};
 use shadow_core::lock::FileLock;
@@ -596,22 +597,26 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     // Step 14: Allocate subordinate UID/GID ranges for rootless containers.
     // Only done when the relevant file exists (matching GNU shadow-utils behavior).
     let subuid_path = opts.root.subuid_path();
-    if subuid_path.exists() {
-        let _ = append_subid_entry(
+    if subuid_path.exists()
+        && let Err(e) = append_subid_entry(
             &subuid_path,
             &opts.login,
             100_000 + u64::from(uid) * 65_536,
             65_536,
-        );
+        )
+    {
+        uucore::show_error!("warning: failed to add subordinate UID range: {e}");
     }
     let subgid_path = opts.root.subgid_path();
-    if subgid_path.exists() {
-        let _ = append_subid_entry(
+    if subgid_path.exists()
+        && let Err(e) = append_subid_entry(
             &subgid_path,
             &opts.login,
             100_000 + u64::from(gid) * 65_536,
             65_536,
-        );
+        )
+    {
+        uucore::show_error!("warning: failed to add subordinate GID range: {e}");
     }
 
     // Step 15: Add to supplementary groups.
@@ -629,6 +634,9 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     // Step 17: Invalidate nscd caches.
     nscd::invalidate_cache("passwd");
     nscd::invalidate_cache("group");
+
+    // Step 18: Audit log.
+    audit::log_user_event("ADD_USER", &opts.login, uid, true);
 
     Ok(())
 }
@@ -868,7 +876,17 @@ fn append_subid_entry(path: &Path, name: &str, start: u64, count: u64) -> UResul
         UseraddError::CannotUpdatePasswd(format!("cannot lock {}: {e}", path.display()))
     })?;
 
-    let mut entries = subid::read_subid_file(path).unwrap_or_default();
+    let mut entries = match subid::read_subid_file(path) {
+        Ok(e) => e,
+        Err(e) => {
+            uucore::show_error!("warning: cannot read {}: {e}", path.display());
+            return Err(UseraddError::CannotUpdatePasswd(format!(
+                "cannot read {}: {e}",
+                path.display()
+            ))
+            .into());
+        }
+    };
 
     // Don't add a duplicate entry.
     if entries.iter().any(|e| e.name == name) {
