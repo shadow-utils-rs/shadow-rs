@@ -54,6 +54,8 @@ fn dispatch(name: &str, args: &[std::ffi::OsString]) -> Option<i32> {
     match name {
         #[cfg(feature = "passwd")]
         "passwd" => Some(passwd::uumain(args.iter().cloned())),
+        #[cfg(feature = "pwck")]
+        "pwck" => Some(pwck::uumain(args.iter().cloned())),
         _ => None,
     }
 }
@@ -63,4 +65,6 @@ fn print_available_utils() {
 
     #[cfg(feature = "passwd")]
     println!("  passwd");
+    #[cfg(feature = "pwck")]
+    println!("  pwck");
 }

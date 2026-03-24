@@ -15,6 +15,7 @@ categories = ["command-line-utilities", "os::unix-apis"]
 members = [
     "src/shadow-core",
     "src/uu/passwd",
+    "src/uu/pwck",
 ]
 
 [workspace.package]
@@ -51,15 +52,17 @@ tempfile = "3"
 [dependencies]
 # Tool crates (optional, enabled by features)
 passwd = { optional = true, version = "0.0.1", package = "uu_passwd", path = "src/uu/passwd" }
+pwck = { optional = true, version = "0.0.1", package = "uu_pwck", path = "src/uu/pwck" }
 
 [features]
-default = ["passwd"]
+default = ["passwd", "pwck"]
 
 # Individual tools
 feat_passwd = ["passwd"]
+feat_pwck = ["pwck"]
 
 # Grouped features (add tools as implemented)
-feat_common = ["feat_passwd"]
+feat_common = ["feat_passwd", "feat_pwck"]
 
 [[bin]]
 name = "shadow-rs"
