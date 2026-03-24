@@ -52,6 +52,10 @@ fn main() {
 
 fn dispatch(name: &str, args: &[std::ffi::OsString]) -> Option<i32> {
     match name {
+        #[cfg(feature = "chage")]
+        "chage" => Some(chage::uumain(args.iter().cloned())),
+        #[cfg(feature = "chpasswd")]
+        "chpasswd" => Some(chpasswd::uumain(args.iter().cloned())),
         #[cfg(feature = "passwd")]
         "passwd" => Some(passwd::uumain(args.iter().cloned())),
         #[cfg(feature = "pwck")]
@@ -63,6 +67,10 @@ fn dispatch(name: &str, args: &[std::ffi::OsString]) -> Option<i32> {
 fn print_available_utils() {
     println!("Available utilities:");
 
+    #[cfg(feature = "chage")]
+    println!("  chage");
+    #[cfg(feature = "chpasswd")]
+    println!("  chpasswd");
     #[cfg(feature = "passwd")]
     println!("  passwd");
     #[cfg(feature = "pwck")]

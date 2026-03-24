@@ -86,10 +86,20 @@ name = "shadow-rs"
 path = "src/bin/shadow-rs.rs"
 
 [[test]]
+name = "test_chage"
+path = "tests/by-util/test_chage.rs"
+
+[[test]]
+name = "test_chpasswd"
+path = "tests/by-util/test_chpasswd.rs"
+
+[[test]]
 name = "test_passwd"
 path = "tests/by-util/test_passwd.rs"
 
 [dev-dependencies]
+chage = { version = "0.0.1", package = "uu_chage", path = "src/uu/chage" }
+chpasswd = { version = "0.0.1", package = "uu_chpasswd", path = "src/uu/chpasswd" }
 shadow-core = { path = "src/shadow-core", features = ["shadow"] }
 nix = { workspace = true }
 tempfile = { workspace = true }
