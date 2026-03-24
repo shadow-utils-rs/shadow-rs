@@ -278,7 +278,7 @@ where
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    shadow_core::hardening::harden_process();
+    let _clean_env = shadow_core::hardening::harden_process();
 
     let matches = match uu_app().try_get_matches_from(args) {
         Ok(m) => m,

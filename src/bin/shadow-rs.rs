@@ -8,11 +8,6 @@
 //! Dispatches to the appropriate utility based on `argv[0]`.
 //! When invoked as `shadow-rs <util>`, uses the first argument instead.
 
-// newgrp uses crypt(3) from libcrypt — ensure the linker includes it.
-#[cfg(feature = "newgrp")]
-#[link(name = "crypt")]
-extern "C" {}
-
 use std::path::Path;
 
 fn main() {

@@ -32,7 +32,8 @@ members = [
 
 [workspace.package]
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
+rust-version = "1.94.0"
 license = "MIT"
 authors = ["shadow-rs contributors"]
 repository = "https://github.com/shadow-utils-rs/shadow-rs"
@@ -145,13 +146,29 @@ tempfile = { workspace = true }
 [profile.release]
 lto = true
 strip = true
+panic = "abort"
+codegen-units = 1
+
+[profile.release-small]
+inherits = "release"
+opt-level = "z"
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+unsafe_code = "deny"
+dead_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny" }
 pedantic = { level = "warn" }
+cargo = { level = "warn", priority = -1 }
+# Allowed pedantic/cargo lints that don't add value for this project:
+multiple_crate_versions = { level = "allow", priority = 1 }
+missing_panics_doc = { level = "allow", priority = 1 }
+missing_errors_doc = { level = "allow", priority = 1 }
+must_use_candidate = { level = "allow", priority = 1 }
+module_name_repetitions = { level = "allow", priority = 1 }
+cargo_common_metadata = { level = "allow", priority = 1 }
 
 [lints]
 workspace = true

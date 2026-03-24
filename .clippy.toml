@@ -1,0 +1,4 @@
+msrv = "1.94.0"
+cognitive-complexity-threshold = 30
+check-private-items = true
+avoid-breaking-exported-api = false

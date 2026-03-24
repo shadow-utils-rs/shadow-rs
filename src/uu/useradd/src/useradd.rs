@@ -275,7 +275,7 @@ fn today_days_since_epoch() -> i64 {
 /// Entry point for the `useradd` utility.
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    shadow_core::hardening::harden_process();
+    let _clean_env = shadow_core::hardening::harden_process();
 
     let matches = match uu_app().try_get_matches_from(args) {
         Ok(m) => m,
@@ -421,11 +421,7 @@ fn parse_options(matches: &clap::ArgMatches) -> Result<UseraddOptions, UseraddEr
             let val = s
                 .parse::<i64>()
                 .map_err(|_| UseraddError::BadArgument(format!("invalid inactive value '{s}'")))?;
-            if val < 0 {
-                None
-            } else {
-                Some(val)
-            }
+            if val < 0 { None } else { Some(val) }
         }
         None => defs.get_i64("INACTIVE").filter(|&v| v >= 0),
     };

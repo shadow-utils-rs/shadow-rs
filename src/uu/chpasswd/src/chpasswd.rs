@@ -191,8 +191,10 @@ fn read_pairs_from_stdin() -> Result<Vec<PasswordPair>, ChpasswdError> {
 
 /// Compute the current day since epoch (for `last_change` field).
 fn days_since_epoch() -> i64 {
-    // SAFETY: time(NULL) is always safe.
-    let now = unsafe { libc::time(std::ptr::null_mut()) };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
     now / 86400
 }
 
@@ -203,7 +205,7 @@ fn days_since_epoch() -> i64 {
 /// Entry point for the `chpasswd` utility.
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    shadow_core::hardening::harden_process();
+    let _clean_env = shadow_core::hardening::harden_process();
 
     let matches = match uu_app().try_get_matches_from(args) {
         Ok(m) => m,

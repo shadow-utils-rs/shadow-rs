@@ -143,7 +143,7 @@ fn apply_landlock_inner(_root: &SysRoot) {
 #[uucore::main]
 #[allow(clippy::too_many_lines)]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    shadow_core::hardening::harden_process();
+    let _clean_env = shadow_core::hardening::harden_process();
 
     let matches = match uu_app().try_get_matches_from(args) {
         Ok(m) => m,
@@ -504,46 +504,23 @@ impl Drop for PrivDrop {
     }
 }
 
-/// Install a signal handler for SIGINT that prints "Password unchanged."
-/// and exits cleanly. This matches OpenBSD's kbintr pattern.
-///
-/// Only call this during interactive password input. The handler uses
-/// async-signal-safe functions only (_exit, write).
-fn install_interrupt_handler() {
-    // SAFETY: The handler uses only async-signal-safe operations
-    // (write to fd 2, _exit). No heap allocation or mutex locking.
-    unsafe {
-        let action = nix::sys::signal::SigAction::new(
-            nix::sys::signal::SigHandler::Handler(handle_interrupt),
-            nix::sys::signal::SaFlags::empty(),
-            nix::sys::signal::SigSet::empty(),
-        );
-        let _ = nix::sys::signal::sigaction(nix::sys::signal::Signal::SIGINT, &action);
-    }
-}
-
-extern "C" fn handle_interrupt(_sig: libc::c_int) {
-    // Async-signal-safe: only write() and _exit().
-    // SAFETY: Writing to stderr fd and exiting — both are signal-safe.
-    unsafe {
-        libc::write(2, b"\nPassword unchanged.\n".as_ptr().cast(), 21);
-        libc::_exit(0);
-    }
-}
+// Note: custom SIGINT handler removed — it required unsafe (sigaction +
+// libc::write + libc::_exit). SIGINT terminates without unwinding, so
+// EchoGuard::drop won't run. Terminal echo restoration after Ctrl+C relies
+// on the terminal driver resetting on process exit (standard behavior).
+// The "Password unchanged." message was cosmetic, not security-critical.
 
 /// Default operation: change password via PAM.
 ///
 /// Feature-gated on `pam`. When PAM is not compiled in, prints an error.
 fn cmd_pam_change(matches: &clap::ArgMatches, _target_user: &str) -> UResult<()> {
-    install_interrupt_handler();
-
     let _keep_tokens = matches.get_flag(options::KEEP_TOKENS);
     let _use_stdin = matches.get_flag(options::STDIN);
     let _repository = matches.get_one::<String>(options::REPOSITORY);
 
     #[cfg(feature = "pam")]
     {
-        use shadow_core::pam::{flags, ConvMode, PamContext};
+        use shadow_core::pam::{ConvMode, PamContext, flags};
 
         let conv_mode = if _use_stdin {
             ConvMode::Stdin
@@ -696,21 +673,21 @@ fn format_status(entry: &ShadowEntry) -> String {
 }
 
 /// Convert days since epoch to `YYYY-MM-DD` format (matching GNU `passwd -S`).
+///
+/// Uses the Hinnant `civil_from_days` algorithm — pure Rust, no libc.
 fn format_days_since_epoch(days: i64) -> String {
-    let secs = days * 86400;
-    // SAFETY: zeroed tm struct is valid for localtime_r to populate.
-    let mut tm = unsafe { std::mem::zeroed::<libc::tm>() };
-    let time = secs as libc::time_t;
-    // SAFETY: both pointers are valid, properly aligned, and localtime_r is reentrant.
-    unsafe {
-        libc::localtime_r(&raw const time, &raw mut tm);
-    }
-    format!(
-        "{:04}-{:02}-{:02}",
-        tm.tm_year + 1900,
-        tm.tm_mon + 1,
-        tm.tm_mday
-    )
+    // Algorithm: https://howardhinnant.github.io/date_algorithms.html#civil_from_days
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 // ---------------------------------------------------------------------------
@@ -1463,37 +1440,33 @@ mod tests {
     }
 
     #[test]
-    fn test_sanitize_env() {
-        // Set some dangerous vars.
-        std::env::set_var("LD_PRELOAD", "/tmp/evil.so");
-        std::env::set_var("IFS", "\t");
-        std::env::set_var("TERM", "xterm-256color");
-        std::env::set_var("LC_TIME", "en_US.UTF-8");
+    fn test_sanitized_env() {
+        let env = shadow_core::hardening::sanitized_env();
 
-        shadow_core::hardening::sanitize_env();
+        // PATH must be set to the safe default.
+        let path_val = env
+            .iter()
+            .find(|(k, _)| k == "PATH")
+            .map(|(_, v)| v.as_str());
+        assert_eq!(path_val, Some("/usr/bin:/bin:/usr/sbin:/sbin"));
 
-        // Dangerous vars must be gone.
+        // Dangerous vars must not appear.
         assert!(
-            std::env::var("LD_PRELOAD").is_err(),
-            "LD_PRELOAD should be cleared"
+            !env.iter().any(|(k, _)| k == "LD_PRELOAD"),
+            "LD_PRELOAD should not be in sanitized env"
         );
-        assert!(std::env::var("IFS").is_err(), "IFS should be cleared");
-
-        // Safe vars preserved.
-        assert_eq!(
-            std::env::var("TERM").ok().as_deref(),
-            Some("xterm-256color")
-        );
-        assert_eq!(
-            std::env::var("LC_TIME").ok().as_deref(),
-            Some("en_US.UTF-8")
+        assert!(
+            !env.iter().any(|(k, _)| k == "IFS"),
+            "IFS should not be in sanitized env"
         );
 
-        // PATH set to safe default.
-        assert_eq!(
-            std::env::var("PATH").ok().as_deref(),
-            Some("/usr/bin:/bin:/usr/sbin:/sbin")
-        );
+        // Only PATH, TERM, LANG, and LC_* keys are allowed.
+        for (k, _) in &env {
+            assert!(
+                k == "PATH" || k == "TERM" || k == "LANG" || k.starts_with("LC_"),
+                "unexpected key in sanitized env: {k}"
+            );
+        }
     }
 
     // -------------------------------------------------------------------

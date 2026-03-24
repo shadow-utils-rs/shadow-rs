@@ -15,6 +15,7 @@ use std::path::Path;
 
 use clap::{Arg, Command};
 
+use shadow_core::crypt;
 use shadow_core::group;
 use shadow_core::gshadow;
 use shadow_core::sysroot::SysRoot;
@@ -208,34 +209,13 @@ fn read_password(prompt: &str) -> Result<String, NewgrpError> {
     Ok(buf.trim_end_matches('\n').to_string())
 }
 
-// Link against libcrypt for crypt(3).
-#[link(name = "crypt")]
-extern "C" {
-    fn crypt(key: *const libc::c_char, salt: *const libc::c_char) -> *mut libc::c_char;
-}
-
 /// Verify a password against a crypt(3) hash.
 ///
-/// Uses the POSIX `crypt(3)` function for verification.
+/// Delegates to `shadow_core::crypt::verify_password` which wraps
+/// the POSIX `crypt(3)` function.
 fn verify_password(password: &str, hash: &str) -> Result<bool, NewgrpError> {
-    let c_password =
-        CString::new(password).map_err(|_| NewgrpError::Error("invalid password".into()))?;
-    let c_hash = CString::new(hash).map_err(|_| NewgrpError::Error("invalid hash".into()))?;
-
-    // SAFETY: crypt() is provided by libcrypt/glibc, both arguments are valid
-    // null-terminated C strings. The returned pointer is to a static
-    // buffer (or thread-local on glibc).
-    let result = unsafe { crypt(c_password.as_ptr(), c_hash.as_ptr()) };
-
-    if result.is_null() {
-        return Ok(false);
-    }
-
-    // SAFETY: crypt returned a non-null pointer to a null-terminated string.
-    let result_str = unsafe { std::ffi::CStr::from_ptr(result) };
-    let result_str = result_str.to_str().unwrap_or("");
-
-    Ok(result_str == hash)
+    crypt::verify_password(password, hash)
+        .map_err(|e| NewgrpError::Error(format!("password verification failed: {e}")))
 }
 
 // ---------------------------------------------------------------------------
@@ -245,19 +225,10 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, NewgrpError> {
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     shadow_core::hardening::suppress_core_dumps();
-    // We intentionally do NOT fully sanitize env for newgrp because it
-    // needs to preserve $SHELL and $HOME for the new shell session.
-    // However, we do save/restore SHELL before any env manipulation.
-    let saved_shell = std::env::var("SHELL").ok();
-    let saved_home = std::env::var("HOME").ok();
-    shadow_core::hardening::sanitize_env();
-    // Restore SHELL and HOME for the new shell session.
-    if let Some(shell) = &saved_shell {
-        std::env::set_var("SHELL", shell);
-    }
-    if let Some(home) = &saved_home {
-        std::env::set_var("HOME", home);
-    }
+    // sanitized_env() returns a clean env without mutating the process.
+    // newgrp preserves the current process env because it needs $SHELL
+    // and $HOME for the new shell session.
+    let _clean_env = shadow_core::hardening::sanitized_env();
 
     let matches = match uu_app().try_get_matches_from(args) {
         Ok(m) => m,

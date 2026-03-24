@@ -263,10 +263,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 }
             }
             for gname in &new_groups {
-                if let Some(g) = ge.iter_mut().find(|g| g.name == *gname) {
-                    if !g.members.iter().any(|m| m == login) {
-                        g.members.push(login.clone());
-                    }
+                if let Some(g) = ge.iter_mut().find(|g| g.name == *gname)
+                    && !g.members.iter().any(|m| m == login)
+                {
+                    g.members.push(login.clone());
                 }
             }
 
@@ -413,9 +413,11 @@ mod tests {
 
     #[test]
     fn test_lock_unlock_conflict() {
-        assert!(uu_app()
-            .try_get_matches_from(["usermod", "-L", "-U", "u"])
-            .is_err());
+        assert!(
+            uu_app()
+                .try_get_matches_from(["usermod", "-L", "-U", "u"])
+                .is_err()
+        );
     }
 
     #[test]

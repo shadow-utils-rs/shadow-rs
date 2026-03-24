@@ -27,8 +27,15 @@ pub mod login_defs;
 #[cfg(feature = "subid")]
 pub mod subid;
 
+// PAM and crypt are C libraries — FFI inherently requires unsafe.
+// These are the ONLY modules where unsafe_code is permitted.
 #[cfg(feature = "pam")]
+#[allow(unsafe_code)]
 pub mod pam;
+
+#[cfg(feature = "crypt")]
+#[allow(unsafe_code)]
+pub mod crypt;
 
 #[cfg(feature = "selinux")]
 pub mod selinux;
