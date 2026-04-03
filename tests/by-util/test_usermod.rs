@@ -369,3 +369,90 @@ fn test_uid_collision_fails() {
     let code = run_with_prefix(&dir, &["-u", "1001", "bob"]);
     assert_eq!(code, 4, "UID collision should exit 4");
 }
+
+#[test]
+fn test_set_password() {
+    if skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:*:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+
+    let hash = "$6$rounds=5000$saltsalt$hashvalue";
+    let code = run_with_prefix(&dir, &["-p", hash, "testuser"]);
+    assert_eq!(code, 0, "setting password should succeed");
+
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains(&format!("testuser:{hash}:")),
+        "shadow should contain the new hash, got: {content}"
+    );
+    // last_change should be updated (not 19500 anymore)
+    assert!(
+        !content.contains(":19500:"),
+        "last_change should be updated from 19500, got: {content}"
+    );
+}
+
+#[test]
+fn test_set_password_long_flag() {
+    if skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:!:19500:0:99999:7:::\n",
+        "testuser:x:1000:\n",
+    );
+
+    let hash = "$6$newsalt$newhash";
+    let code = run_with_prefix(&dir, &["--password", hash, "testuser"]);
+    assert_eq!(code, 0, "--password long flag should succeed");
+
+    let content = read_shadow(&dir);
+    assert!(
+        content.contains(&format!("testuser:{hash}:")),
+        "shadow should contain the new hash, got: {content}"
+    );
+}
+
+#[test]
+fn test_set_password_preserves_other_fields() {
+    if skip_unless_root() {
+        return;
+    }
+
+    let dir = setup_prefix(
+        "testuser:x:1000:1000:Test:/home/testuser:/bin/bash\n",
+        "testuser:$6$old:19500:1:90:14:30:20000:\n",
+        "testuser:x:1000:\n",
+    );
+
+    let hash = "$6$new$newhash";
+    let code = run_with_prefix(&dir, &["-p", hash, "testuser"]);
+    assert_eq!(code, 0);
+
+    let content = read_shadow(&dir);
+    // min_age=1, max_age=90, warn=14, inactive=30, expire=20000 should be preserved
+    let line = content
+        .lines()
+        .find(|l| l.starts_with("testuser:"))
+        .unwrap();
+    let fields: Vec<&str> = line.split(':').collect();
+    assert_eq!(fields[0], "testuser");
+    assert_eq!(fields[1], hash);
+    // fields[2] = last_change (updated, not 19500)
+    assert_ne!(fields[2], "19500", "last_change should be updated");
+    assert_eq!(fields[3], "1", "min_age should be preserved");
+    assert_eq!(fields[4], "90", "max_age should be preserved");
+    assert_eq!(fields[5], "14", "warn_days should be preserved");
+    assert_eq!(fields[6], "30", "inactive_days should be preserved");
+    assert_eq!(fields[7], "20000", "expire_date should be preserved");
+    assert_eq!(fields.len(), 9, "shadow entry should have exactly 9 fields");
+    assert_eq!(fields[8], "", "reserved field should be empty");
+}

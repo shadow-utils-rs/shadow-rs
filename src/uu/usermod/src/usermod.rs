@@ -35,6 +35,7 @@ mod options {
     pub const LOGIN: &str = "login";
     pub const SHELL: &str = "shell";
     pub const UID: &str = "uid";
+    pub const PASSWORD: &str = "password";
     pub const ROOT: &str = "root";
     pub const PREFIX: &str = "prefix";
     pub const USER: &str = "USER";
@@ -168,10 +169,25 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let do_unlock = matches.get_flag(options::UNLOCK);
     let expire = matches.get_one::<String>(options::EXPIREDATE);
     let inactive = matches.get_one::<i64>(options::INACTIVE);
+    let new_password = matches.get_one::<String>(options::PASSWORD);
+
+    if let Some(pw) = new_password
+        && pw.contains([':', '\n', '\r'])
+    {
+        return Err(UsermodError::CantUpdate(
+            "invalid password hash: must not contain ':', '\\n', or '\\r'".into(),
+        )
+        .into());
+    }
 
     let login_changing = new_login.is_some();
     if shadow_path.exists()
-        && (do_lock || do_unlock || expire.is_some() || inactive.is_some() || login_changing)
+        && (do_lock
+            || do_unlock
+            || expire.is_some()
+            || inactive.is_some()
+            || new_password.is_some()
+            || login_changing)
     {
         let slock = FileLock::acquire(&shadow_path)
             .map_err(|e| UsermodError::CantUpdate(format!("cannot lock shadow: {e}")))?;
@@ -179,30 +195,40 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         let mut se = shadow::read_shadow_file(&shadow_path)
             .map_err(|e| UsermodError::CantUpdate(format!("{e}")))?;
 
-        if let Some(s) = se.iter_mut().find(|e| e.name == *login) {
-            if do_lock {
-                s.lock();
-            }
-            if do_unlock {
-                s.unlock();
-            }
-            if let Some(exp) = expire {
-                s.expire_date = if exp == "-1" || exp.is_empty() {
-                    None
-                } else {
-                    Some(exp.parse::<i64>().map_err(|_| {
-                        UsermodError::CantUpdate(format!(
-                            "invalid expire date '{exp}' (expected days since epoch)"
-                        ))
-                    })?)
-                };
-            }
-            if let Some(&i) = inactive {
-                s.inactive_days = if i < 0 { None } else { Some(i) };
-            }
-            if let Some(new_name) = new_login {
-                s.name.clone_from(new_name);
-            }
+        let Some(s) = se.iter_mut().find(|e| e.name == *login) else {
+            drop(slock);
+            return Err(UsermodError::CantUpdate(format!(
+                "user '{login}' not found in shadow file"
+            ))
+            .into());
+        };
+
+        if do_lock {
+            s.lock();
+        }
+        if do_unlock {
+            s.unlock();
+        }
+        if let Some(exp) = expire {
+            s.expire_date = if exp == "-1" || exp.is_empty() {
+                None
+            } else {
+                Some(exp.parse::<i64>().map_err(|_| {
+                    UsermodError::CantUpdate(format!(
+                        "invalid expire date '{exp}' (expected days since epoch)"
+                    ))
+                })?)
+            };
+        }
+        if let Some(&i) = inactive {
+            s.inactive_days = if i < 0 { None } else { Some(i) };
+        }
+        if let Some(pw) = new_password {
+            s.passwd.clone_from(pw);
+            s.last_change = Some(shadow::days_since_epoch());
+        }
+        if let Some(new_name) = new_login {
+            s.name.clone_from(new_name);
         }
 
         atomic::atomic_write(&shadow_path, |f| shadow::write_shadow(&se, f))
@@ -407,6 +433,13 @@ pub fn uu_app() -> Command {
                 .long("login")
                 .value_name("NEW_LOGIN")
                 .help("New login name"),
+        )
+        .arg(
+            Arg::new(options::PASSWORD)
+                .short('p')
+                .long("password")
+                .value_name("PASSWORD")
+                .help("New encrypted password (crypt(3) hash)"),
         )
         .arg(
             Arg::new(options::SHELL)
