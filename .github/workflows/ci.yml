@@ -61,6 +61,7 @@ jobs:
 
   test-docker:
     name: Test (${{ matrix.target }})
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       matrix:

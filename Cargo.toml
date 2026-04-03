@@ -8,6 +8,7 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Memory-safe Rust reimplementation of Linux shadow-utils"
 readme = "README.md"
 keywords = ["shadow-utils", "uutils", "shadow", "passwd", "linux"]
