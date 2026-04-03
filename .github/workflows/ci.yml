@@ -58,3 +58,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  test-docker:
+    name: Test (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [debian, alpine, fedora]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose run --rm ${{ matrix.target }} cargo test --workspace
