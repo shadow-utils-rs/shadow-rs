@@ -1,0 +1,63 @@
+# shadow-rs end-to-end deployment test image
+#
+# Simulates a real deployment: build from source, install system-wide
+# (replacing GNU shadow-utils), then run ~100 assertions.
+#
+# Usage:
+#   docker compose build e2e
+#   docker compose run --rm e2e            # run all tests
+#   docker compose run --rm e2e bash       # debug interactively
+
+# ── Stage 1: build shadow-rs ────────────────────────────────────────
+FROM rust:latest AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpam0g-dev \
+    libselinux1-dev \
+    libaudit-dev \
+    pkg-config \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+RUN cargo build --release --features pam \
+    && make install DESTDIR=/install PREFIX=/usr
+
+# ── Stage 2: runtime with tests ────────────────────────────────────
+FROM debian:trixie
+
+# Install GNU shadow-utils first — this creates /etc/pam.d/passwd,
+# /etc/pam.d/su, and other PAM configs we need. We overwrite the
+# binaries below but keep the PAM configuration intact.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    passwd \
+    login \
+    && rm -rf /var/lib/apt/lists/*
+
+# Overwrite GNU binaries with shadow-rs
+COPY --from=builder /install/usr/sbin/ /usr/sbin/
+
+# Setuid-root — chmod on symlink sets the bit on the target binary
+RUN chmod 4755 /usr/sbin/shadow-rs
+
+# Install test dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    expect \
+    nscd \
+    ansible-core \
+    python3-passlib \
+    procps \
+    openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create a non-root test runner using our own tools
+RUN /usr/sbin/useradd -m -s /bin/bash testrunner
+
+# Copy test scripts
+COPY tests/e2e/ /tests/e2e/
+RUN chmod +x /tests/e2e/deploy-test.sh
+
+WORKDIR /tests/e2e
+CMD ["./deploy-test.sh"]

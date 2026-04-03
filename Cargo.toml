@@ -110,6 +110,9 @@ feat_phase2 = ["feat_useradd", "feat_userdel", "feat_usermod", "feat_chpasswd", 
 feat_phase3 = ["feat_groupadd", "feat_groupdel", "feat_groupmod", "feat_grpck", "feat_chfn", "feat_chsh", "feat_newgrp"]
 feat_common = ["feat_phase1", "feat_phase2"]
 
+# PAM authentication (requires libpam-dev)
+pam = ["passwd/pam"]
+
 # Shell completions generator
 completions = ["dep:clap_complete"]
 
