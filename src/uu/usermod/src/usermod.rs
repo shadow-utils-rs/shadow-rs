@@ -35,6 +35,7 @@ mod options {
     pub const LOGIN: &str = "login";
     pub const SHELL: &str = "shell";
     pub const UID: &str = "uid";
+    pub const PASSWORD: &str = "password";
     pub const ROOT: &str = "root";
     pub const PREFIX: &str = "prefix";
     pub const USER: &str = "USER";
@@ -168,10 +169,16 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let do_unlock = matches.get_flag(options::UNLOCK);
     let expire = matches.get_one::<String>(options::EXPIREDATE);
     let inactive = matches.get_one::<i64>(options::INACTIVE);
+    let new_password = matches.get_one::<String>(options::PASSWORD);
 
     let login_changing = new_login.is_some();
     if shadow_path.exists()
-        && (do_lock || do_unlock || expire.is_some() || inactive.is_some() || login_changing)
+        && (do_lock
+            || do_unlock
+            || expire.is_some()
+            || inactive.is_some()
+            || new_password.is_some()
+            || login_changing)
     {
         let slock = FileLock::acquire(&shadow_path)
             .map_err(|e| UsermodError::CantUpdate(format!("cannot lock shadow: {e}")))?;
@@ -199,6 +206,10 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
             }
             if let Some(&i) = inactive {
                 s.inactive_days = if i < 0 { None } else { Some(i) };
+            }
+            if let Some(pw) = new_password {
+                s.passwd.clone_from(pw);
+                s.last_change = Some(days_since_epoch());
             }
             if let Some(new_name) = new_login {
                 s.name.clone_from(new_name);
@@ -285,6 +296,14 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     audit::log_user_event("MOD_USER", login, new_uid, true);
 
     Ok(())
+}
+
+fn days_since_epoch() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    now / 86400
 }
 
 /// Recursively chown all files and directories under `path` that are owned by
@@ -407,6 +426,13 @@ pub fn uu_app() -> Command {
                 .long("login")
                 .value_name("NEW_LOGIN")
                 .help("New login name"),
+        )
+        .arg(
+            Arg::new(options::PASSWORD)
+                .short('p')
+                .long("password")
+                .value_name("PASSWORD")
+                .help("New encrypted password (crypt(3) hash)"),
         )
         .arg(
             Arg::new(options::SHELL)
