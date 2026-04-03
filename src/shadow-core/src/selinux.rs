@@ -10,6 +10,10 @@
 //! contexts during atomic file replacement.
 //!
 //! Feature-gated behind `selinux`. When disabled, all operations are no-ops.
+//!
+//! **Implementation note**: This module currently shells out to `getfattr`,
+//! `chcon`, and `restorecon` rather than using native `libselinux` bindings.
+//! Native integration is planned for a future release.
 
 use std::path::Path;
 

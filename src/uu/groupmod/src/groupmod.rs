@@ -88,10 +88,6 @@ impl UError for GroupmodError {
 
 // Hardening functions are now centralized in shadow_core::hardening.
 
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -112,7 +108,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     };
 
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("Permission denied.");
         return Err(GroupmodError::AlreadyPrinted(1).into());
     }
@@ -141,6 +137,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
                 .map_err(|_| GroupmodError::BadArgument(format!("invalid GID '{s}'")))
         })
         .transpose()?;
+
+    // Block signals for the duration of the critical section so a SIGINT
+    // between lock acquisition and atomic_write cannot leave stale lock files.
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| GroupmodError::CantUpdate(format!("cannot block signals: {e}")))?;
 
     // Lock and read /etc/group.
     let group_path = root.group_path();

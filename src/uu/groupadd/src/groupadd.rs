@@ -89,11 +89,6 @@ impl UError for GroupaddError {
 
 // Hardening functions are now centralized in shadow_core::hardening.
 
-/// Check whether the real UID is root.
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -113,7 +108,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     };
 
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("Permission denied.");
         return Err(GroupaddError::AlreadyPrinted(1).into());
     }
@@ -187,6 +182,11 @@ fn do_groupadd(matches: &clap::ArgMatches) -> UResult<()> {
         &root,
         &login_defs_overrides,
     )?;
+
+    // Block signals for the duration of the critical section so a SIGINT
+    // between lock acquisition and atomic_write cannot leave stale lock files.
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| GroupaddError::CantUpdate(format!("cannot block signals: {e}")))?;
 
     // Write to /etc/group.
     write_group_entry(&group_path, &group_name, gid)?;

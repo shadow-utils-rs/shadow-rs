@@ -42,8 +42,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path, uid: u32, gid: u32) -> Result<(), 
             .map_err(|e| ShadowError::IoPath(e, src_path.clone()))?;
 
         if file_type.is_dir() {
-            std::fs::create_dir_all(&dst_path)
-                .map_err(|e| ShadowError::IoPath(e, dst_path.clone()))?;
+            std::fs::create_dir(&dst_path).map_err(|e| ShadowError::IoPath(e, dst_path.clone()))?;
             // Preserve the source directory's permissions.
             let src_perms = std::fs::metadata(&src_path)
                 .map_err(|e| ShadowError::IoPath(e, src_path.clone()))?

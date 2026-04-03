@@ -9,8 +9,15 @@
 //! When invoked as `shadow-rs <util>`, uses the first argument instead.
 
 use std::path::Path;
+use std::process::ExitCode;
 
-fn main() {
+/// Convert a tool's `i32` exit code to `ExitCode`.
+#[allow(clippy::cast_sign_loss)] // clamp(0, 255) guarantees non-negative
+fn to_exit_code(code: i32) -> ExitCode {
+    ExitCode::from(code.clamp(0, 255) as u8)
+}
+
+fn main() -> ExitCode {
     let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
 
     let binary_name = args
@@ -24,7 +31,7 @@ fn main() {
 
     // Direct invocation via symlink (e.g., argv[0] = "passwd")
     if let Some(code) = dispatch(&binary_name, &args) {
-        std::process::exit(code);
+        return to_exit_code(code);
     }
 
     // Multicall: `shadow-rs <util> [args...]`
@@ -33,21 +40,21 @@ fn main() {
 
         if util_name == "--list" {
             print_available_utils();
-            std::process::exit(0);
+            return ExitCode::SUCCESS;
         }
 
         if let Some(code) = dispatch(&util_name, &args[1..]) {
-            std::process::exit(code);
+            return to_exit_code(code);
         }
 
         eprintln!("shadow-rs: unknown utility '{util_name}'");
         eprintln!("Run 'shadow-rs --list' for available utilities.");
-        std::process::exit(1);
+        return ExitCode::FAILURE;
     }
 
     eprintln!("Usage: shadow-rs <utility> [arguments...]");
     eprintln!("Run 'shadow-rs --list' for available utilities.");
-    std::process::exit(1);
+    ExitCode::FAILURE
 }
 
 fn dispatch(name: &str, args: &[std::ffi::OsString]) -> Option<i32> {

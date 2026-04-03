@@ -118,6 +118,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         None
     };
 
+    // Block signals for the duration of the critical section so a SIGINT
+    // between lock acquisition and atomic_write cannot leave stale lock files.
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot block signals: {e}")))?;
+
     // 1. Remove from /etc/passwd
     remove_entry_from_file::<PasswdEntry>(&passwd_path, login, "passwd")
         .map_err(UserdelError::CantUpdatePasswd)?;
@@ -423,6 +428,8 @@ mod tests {
         assert!(m.get_flag(options::FORCE));
     }
 
+    // Duplicated from tests/common/mod.rs — unit tests inside the crate
+    // cannot import from the workspace-level tests directory.
     fn skip_unless_root() -> bool {
         !nix::unistd::geteuid().is_root()
     }

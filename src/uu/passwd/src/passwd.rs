@@ -185,11 +185,12 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         let show_all = matches.get_flag(options::ALL);
 
         // Non-root users can only view their own status.
-        if !caller_is_root() {
+        if !shadow_core::hardening::caller_is_root() {
             if show_all {
                 return Err(PasswdError::PermissionDenied("Permission denied.".into()).into());
             }
-            let current_user = get_current_username()?;
+            let current_user = shadow_core::hardening::current_username()
+                .map_err(|e| PasswdError::UnexpectedFailure(e.to_string()))?;
             if current_user != target_user {
                 return Err(PasswdError::PermissionDenied("Permission denied.".into()).into());
             }
@@ -215,7 +216,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     // Admin operations (lock/unlock/delete/expire/aging) require the real
     // caller to be root. Non-root users can only change their own password
     // (the default PAM path below).
-    if (has_mutation || has_aging) && !caller_is_root() {
+    if (has_mutation || has_aging) && !shadow_core::hardening::caller_is_root() {
         return Err(PasswdError::PermissionDenied("Permission denied.".into()).into());
     }
 
@@ -268,8 +269,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     // Prevent non-root from targeting other users (avoids timing-based
     // user enumeration through PAM auth failure timing).
-    if !caller_is_root() {
-        let current = get_current_username()?;
+    if !shadow_core::hardening::caller_is_root() {
+        let current = shadow_core::hardening::current_username()
+            .map_err(|e| PasswdError::UnexpectedFailure(e.to_string()))?;
         if current != target_user {
             return Err(PasswdError::PermissionDenied(
                 "You may not view or modify password information for another user.".into(),
@@ -541,7 +543,7 @@ fn cmd_pam_change(matches: &clap::ArgMatches, _target_user: &str) -> UResult<()>
         let _priv_drop = PrivDrop::drop_to(nix::unistd::getuid())?;
 
         // Non-root users changing their own password must authenticate first.
-        if !caller_is_root() {
+        if !shadow_core::hardening::caller_is_root() {
             if let Err(e) = pam.authenticate(0) {
                 return Err(PasswdError::PamError(e.to_string()).into());
             }
@@ -605,36 +607,12 @@ fn resolve_target_user(matches: &clap::ArgMatches) -> Result<String, PasswdError
     }
 }
 
-/// Check if the *real* caller is root (not just setuid-root).
-///
-/// Uses `getuid()` (real UID). When passwd is installed setuid-root,
-/// euid is 0 for all callers, but real UID identifies who actually
-/// invoked the program. Use this for authorization decisions:
-/// "is this person allowed to lock/unlock other accounts?"
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
-/// Return the current user's username (from real UID).
-fn get_current_username() -> Result<String, PasswdError> {
-    let uid = nix::unistd::getuid();
-    match nix::unistd::User::from_uid(uid) {
-        Ok(Some(user)) => Ok(user.name),
-        Ok(None) => Err(PasswdError::UnexpectedFailure(format!(
-            "cannot determine current username for uid {uid}"
-        ))),
-        Err(e) => Err(PasswdError::UnexpectedFailure(format!(
-            "cannot determine current username: {e}"
-        ))),
-    }
-}
-
 /// Perform `chroot(2)` into the specified directory.
 ///
 /// Must be root to call `chroot`. After `chroot`, chdir to `/` so the
 /// working directory is valid inside the new root.
 fn do_chroot(dir: &str) -> Result<(), PasswdError> {
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         return Err(PasswdError::PermissionDenied(
             "only root may use --root".into(),
         ));
@@ -698,47 +676,6 @@ fn format_days_since_epoch(days: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-// ---------------------------------------------------------------------------
-// Security hardening — signal blocking during critical file writes
-// ---------------------------------------------------------------------------
-
-/// RAII guard that blocks signals during critical sections and restores on drop.
-///
-/// Prevents SIGINT/SIGTERM/SIGHUP from interrupting a lock-modify-write
-/// sequence, which could leave the shadow file in an inconsistent state
-/// or holding a stale lock.
-struct SignalBlocker {
-    old_mask: nix::sys::signal::SigSet,
-}
-
-impl SignalBlocker {
-    /// Block `SIGINT`, `SIGTERM`, `SIGHUP` to prevent partial file writes.
-    fn block_critical() -> Result<Self, PasswdError> {
-        use nix::sys::signal::{SigSet, SigmaskHow, Signal};
-
-        let mut block_set = SigSet::empty();
-        block_set.add(Signal::SIGINT);
-        block_set.add(Signal::SIGTERM);
-        block_set.add(Signal::SIGHUP);
-
-        let mut old_mask = SigSet::empty();
-        nix::sys::signal::sigprocmask(SigmaskHow::SIG_BLOCK, Some(&block_set), Some(&mut old_mask))
-            .map_err(|e| PasswdError::UnexpectedFailure(format!("cannot block signals: {e}")))?;
-
-        Ok(Self { old_mask })
-    }
-}
-
-impl Drop for SignalBlocker {
-    fn drop(&mut self) {
-        let _ = nix::sys::signal::sigprocmask(
-            nix::sys::signal::SigmaskHow::SIG_SETMASK,
-            Some(&self.old_mask),
-            None,
-        );
-    }
-}
-
 /// Lock the shadow file, read entries, apply a mutation to one user's entry,
 /// write back atomically, invalidate nscd cache.
 fn mutate_shadow<F>(
@@ -759,7 +696,8 @@ where
 
     // Block signals for the entire critical section (lock → write → unlock).
     // The RAII guard restores the original signal mask when this function returns.
-    let _signals = SignalBlocker::block_critical()?;
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| PasswdError::UnexpectedFailure(e.to_string()))?;
 
     let shadow_path = root.shadow_path();
 
@@ -1555,9 +1493,9 @@ mod tests {
     #[test]
     fn test_status_permission_denied_code_path() {
         // Verify the permission-denied code path is reachable by checking
-        // that the get_current_username helper works (it will return a
+        // that the current_username helper works (it will return a
         // username for the current uid).
-        let username = get_current_username();
+        let username = shadow_core::hardening::current_username();
         assert!(username.is_ok(), "should resolve current username");
     }
 }

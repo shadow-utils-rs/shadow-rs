@@ -72,11 +72,14 @@ fn test_conflicting_list_and_lastday() {
 // ---------------------------------------------------------------------------
 // Root-only tests — exercise real operations via SysRoot prefix
 // ---------------------------------------------------------------------------
-
-// Note: these tests use SysRoot via the --root flag. Since chage uses
-// SysRoot::default() (no --prefix support like passwd), we test by
-// constructing the shadow file and calling chage's internal functions.
-// For full integration, we'd need to chroot, which requires root.
+//
+// TODO(#integration): These tests directly manipulate shadow-core data
+// structures instead of calling chage::uumain(). Full end-to-end integration
+// via uumain() is not yet feasible because chage only supports --root (which
+// performs a real chroot(2) and requires root), not --prefix (path-prefix
+// without chroot). Once chage gains a --prefix flag, replace these tests with
+// uumain() calls using run(&["chage", "--prefix", ..., "-m", "10", "testuser"])
+// with synthetic files.
 
 #[test]
 fn test_list_output() {

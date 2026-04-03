@@ -23,6 +23,10 @@ const MAX_USERNAME_LEN: usize = 32;
 /// - Must not end with a period (historically problematic)
 /// - Must not consist of only dots
 ///
+/// **Deviation from GNU shadow-utils**: GNU allows `$` as the final
+/// character (used by Samba machine accounts, e.g., `MACHINE$`). This
+/// implementation intentionally rejects `$` for stricter validation.
+///
 /// # Errors
 ///
 /// Returns `ShadowError::Validation` if the username violates any rule.

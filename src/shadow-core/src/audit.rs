@@ -11,6 +11,10 @@
 //!
 //! This module provides a best-effort logging interface that silently
 //! succeeds when audit is not available.
+//!
+//! **Implementation note**: This module currently shells out to `logger`
+//! rather than using native `libaudit` bindings. Native integration is
+//! planned for a future release.
 
 /// Log a user account event to the audit subsystem.
 ///

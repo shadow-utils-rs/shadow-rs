@@ -64,70 +64,18 @@ impl UError for ChshError {
 // Hardening functions are now centralized in shadow_core::hardening.
 
 // ---------------------------------------------------------------------------
-// Signal blocking
-// ---------------------------------------------------------------------------
-
-struct SignalBlocker {
-    old_mask: nix::sys::signal::SigSet,
-}
-
-impl SignalBlocker {
-    fn block_critical() -> Result<Self, ChshError> {
-        use nix::sys::signal::{SigSet, SigmaskHow, Signal};
-
-        let mut block_set = SigSet::empty();
-        block_set.add(Signal::SIGINT);
-        block_set.add(Signal::SIGTERM);
-        block_set.add(Signal::SIGHUP);
-
-        let mut old_mask = SigSet::empty();
-        nix::sys::signal::sigprocmask(SigmaskHow::SIG_BLOCK, Some(&block_set), Some(&mut old_mask))
-            .map_err(|e| ChshError::Error(format!("cannot block signals: {e}")))?;
-
-        Ok(Self { old_mask })
-    }
-}
-
-impl Drop for SignalBlocker {
-    fn drop(&mut self) {
-        let _ = nix::sys::signal::sigprocmask(
-            nix::sys::signal::SigmaskHow::SIG_SETMASK,
-            Some(&self.old_mask),
-            None,
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
-fn get_current_username() -> Result<String, ChshError> {
-    let uid = nix::unistd::getuid();
-    match nix::unistd::User::from_uid(uid) {
-        Ok(Some(user)) => Ok(user.name),
-        Ok(None) => Err(ChshError::Error(format!(
-            "cannot determine current username for uid {uid}"
-        ))),
-        Err(e) => Err(ChshError::Error(format!(
-            "cannot determine current username: {e}"
-        ))),
-    }
-}
 
 fn resolve_target_user(matches: &clap::ArgMatches) -> Result<String, ChshError> {
     if let Some(user) = matches.get_one::<String>(options::USER) {
         return Ok(user.clone());
     }
-    get_current_username()
+    shadow_core::hardening::current_username().map_err(|e| ChshError::Error(e.to_string()))
 }
 
 fn do_chroot(dir: &str) -> Result<(), ChshError> {
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         return Err(ChshError::Error("only root may use --root".into()));
     }
 
@@ -191,7 +139,7 @@ fn validate_shell(shell: &str, shells_path: &Path) -> Result<(), ChshError> {
     }
 
     // Root can set any existing shell, bypassing the /etc/shells check.
-    if caller_is_root() {
+    if shadow_core::hardening::caller_is_root() {
         return Ok(());
     }
 
@@ -230,7 +178,8 @@ where
         let _ = nix::unistd::setuid(nix::unistd::Uid::from_raw(0));
     }
 
-    let _signals = SignalBlocker::block_critical()?;
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| ChshError::Error(e.to_string()))?;
 
     let passwd_path = root.passwd_path();
 
@@ -325,8 +274,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let target_user = resolve_target_user(&matches)?;
 
     // Non-root users can only change their own shell.
-    if !caller_is_root() {
-        let current_user = get_current_username()?;
+    if !shadow_core::hardening::caller_is_root() {
+        let current_user = shadow_core::hardening::current_username()
+            .map_err(|e| ChshError::Error(e.to_string()))?;
         if current_user != target_user {
             return Err(ChshError::Error("you may only change your own login shell".into()).into());
         }

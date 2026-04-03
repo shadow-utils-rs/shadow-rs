@@ -170,11 +170,6 @@ struct UseraddOptions {
 
 // Hardening functions are now centralized in shadow_core::hardening.
 
-/// Check whether the real UID is root.
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
 // ---------------------------------------------------------------------------
 // Date parsing
 // ---------------------------------------------------------------------------
@@ -293,7 +288,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     };
 
     // Only root can add users.
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("Permission denied.");
         return Err(UseraddError::AlreadyPrinted(1).into());
     }
@@ -480,7 +475,13 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     validate::validate_username(&opts.login)
         .map_err(|e| UseraddError::BadArgument(format!("{e}")))?;
 
-    // Step 2: Acquire locks BEFORE reading so concurrent useradd cannot
+    // Step 2: Block signals for the duration of the critical section so a
+    // SIGINT between lock acquisition and atomic_write cannot leave stale
+    // lock files on disk.
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("cannot block signals: {e}")))?;
+
+    // Acquire locks BEFORE reading so concurrent useradd cannot
     // silently overwrite entries added between our read and write.
     let passwd_path = opts.root.passwd_path();
     let passwd_lock = FileLock::acquire(&passwd_path)

@@ -117,13 +117,15 @@ fn cli() -> Command {
         )
 }
 
-fn generate_for_tool(name: &str, shell: Shell, out: &mut dyn io::Write) {
+fn generate_for_tool(name: &str, shell: Shell, out: &mut dyn io::Write) -> Result<(), String> {
     if let Some(mut cmd) = get_tool_app(name) {
         generate(shell, &mut cmd, name, out);
+        Ok(())
     } else {
-        eprintln!("unknown tool: {name}");
-        eprintln!("available: {}", all_tool_names().join(", "));
-        std::process::exit(1);
+        Err(format!(
+            "unknown tool: {name}\navailable: {}",
+            all_tool_names().join(", ")
+        ))
     }
 }
 
@@ -138,32 +140,37 @@ fn shell_extension(shell: Shell) -> &'static str {
     }
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(msg) => {
+            eprintln!("{msg}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), String> {
     let matches = cli().get_matches();
-    let shell: Shell = matches
+
+    // clap enforces `--shell` is required, so the value is always present.
+    let shell_str = matches
         .get_one::<String>("shell")
-        .expect("shell is required")
-        .parse()
-        .unwrap_or_else(|e| {
-            eprintln!("invalid shell: {e}");
-            eprintln!("supported: bash, zsh, fish, elvish, powershell");
-            std::process::exit(1);
-        });
+        .expect("clap guarantees --shell is present");
+    let shell: Shell = shell_str.parse().map_err(|e| {
+        format!("invalid shell: {e}\nsupported: bash, zsh, fish, elvish, powershell")
+    })?;
 
     if matches.get_flag("all") {
         let tools = all_tool_names();
         if let Some(dir) = matches.get_one::<String>("dir") {
-            std::fs::create_dir_all(dir).unwrap_or_else(|e| {
-                eprintln!("cannot create directory '{dir}': {e}");
-                std::process::exit(1);
-            });
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("cannot create directory '{dir}': {e}"))?;
             let ext = shell_extension(shell);
             for name in &tools {
                 let path = format!("{dir}/{name}.{ext}");
-                let mut file = std::fs::File::create(&path).unwrap_or_else(|e| {
-                    eprintln!("cannot create '{path}': {e}");
-                    std::process::exit(1);
-                });
+                let mut file = std::fs::File::create(&path)
+                    .map_err(|e| format!("cannot create '{path}': {e}"))?;
                 if let Some(mut cmd) = get_tool_app(name) {
                     generate(shell, &mut cmd, *name, &mut file);
                 }
@@ -179,9 +186,14 @@ fn main() {
             }
         }
     } else {
-        let tool = matches.get_one::<String>("tool").expect("tool is required");
+        // clap enforces `tool` is required when `--all` is absent.
+        let tool = matches
+            .get_one::<String>("tool")
+            .expect("clap guarantees tool is present when --all is not set");
         let stdout = io::stdout();
         let mut out = stdout.lock();
-        generate_for_tool(tool, shell, &mut out);
+        generate_for_tool(tool, shell, &mut out)?;
     }
+
+    Ok(())
 }

@@ -110,3 +110,74 @@ pub fn harden_process() -> Vec<(String, String)> {
     raise_file_size_limit();
     sanitized_env()
 }
+
+// ---------------------------------------------------------------------------
+// Identity helpers
+// ---------------------------------------------------------------------------
+
+/// Check whether the *real* caller is root (not just setuid-root).
+///
+/// Uses `getuid()` (real UID). When a tool is installed setuid-root,
+/// `geteuid()` is 0 for all callers, but the real UID identifies who
+/// actually invoked the program.
+pub fn caller_is_root() -> bool {
+    nix::unistd::getuid().is_root()
+}
+
+/// Return the current user's username from the real UID.
+pub fn current_username() -> Result<String, crate::error::ShadowError> {
+    let uid = nix::unistd::getuid();
+    match nix::unistd::User::from_uid(uid) {
+        Ok(Some(user)) => Ok(user.name),
+        Ok(None) => Err(crate::error::ShadowError::Other(
+            format!("cannot determine username for uid {uid}").into(),
+        )),
+        Err(e) => Err(crate::error::ShadowError::Other(
+            format!("cannot determine username: {e}").into(),
+        )),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Signal blocking
+// ---------------------------------------------------------------------------
+
+/// RAII guard that blocks critical signals during file modifications.
+///
+/// Prevents `SIGINT`/`SIGTERM`/`SIGHUP` from interrupting a
+/// lock-modify-write sequence, which could leave password files in an
+/// inconsistent state or holding a stale lock. The original signal mask
+/// is restored when the guard is dropped.
+pub struct SignalBlocker {
+    old_mask: nix::sys::signal::SigSet,
+}
+
+impl SignalBlocker {
+    /// Block `SIGINT`, `SIGTERM`, `SIGHUP` to prevent partial file writes.
+    pub fn block_critical() -> Result<Self, crate::error::ShadowError> {
+        use nix::sys::signal::{SigSet, SigmaskHow, Signal};
+
+        let mut block_set = SigSet::empty();
+        block_set.add(Signal::SIGINT);
+        block_set.add(Signal::SIGTERM);
+        block_set.add(Signal::SIGHUP);
+
+        let mut old_mask = SigSet::empty();
+        nix::sys::signal::sigprocmask(SigmaskHow::SIG_BLOCK, Some(&block_set), Some(&mut old_mask))
+            .map_err(|e| {
+                crate::error::ShadowError::Other(format!("cannot block signals: {e}").into())
+            })?;
+
+        Ok(Self { old_mask })
+    }
+}
+
+impl Drop for SignalBlocker {
+    fn drop(&mut self) {
+        let _ = nix::sys::signal::sigprocmask(
+            nix::sys::signal::SigmaskHow::SIG_SETMASK,
+            Some(&self.old_mask),
+            None,
+        );
+    }
+}

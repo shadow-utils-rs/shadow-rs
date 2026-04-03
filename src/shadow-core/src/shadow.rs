@@ -68,8 +68,13 @@ impl ShadowEntry {
 
     /// Unlock the password by removing the leading `!`.
     ///
-    /// Returns `false` if the password is not locked or would become empty
-    /// after unlocking (GNU passwd refuses this — use `delete` instead).
+    /// Returns `false` if the password is not locked, would become empty
+    /// after unlocking, or is the system account marker `*` (which
+    /// cannot be unlocked — use `delete_password` + rehash instead).
+    ///
+    /// Note: `is_locked()` returns `true` for `*`, but `unlock()` returns
+    /// `false` because removing one character from `*` yields an empty
+    /// password, which GNU passwd refuses.
     pub fn unlock(&mut self) -> bool {
         if !self.is_locked() {
             return false;

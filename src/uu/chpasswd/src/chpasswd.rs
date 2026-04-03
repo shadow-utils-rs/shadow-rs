@@ -77,45 +77,6 @@ impl UError for ChpasswdError {
     }
 }
 
-// Hardening functions are now centralized in shadow_core::hardening.
-
-// ---------------------------------------------------------------------------
-// Signal blocking during critical sections
-// ---------------------------------------------------------------------------
-
-/// RAII guard that blocks signals during critical sections and restores on drop.
-struct SignalBlocker {
-    old_mask: nix::sys::signal::SigSet,
-}
-
-impl SignalBlocker {
-    /// Block `SIGINT`, `SIGTERM`, `SIGHUP` to prevent partial file writes.
-    fn block_critical() -> Result<Self, ChpasswdError> {
-        use nix::sys::signal::{SigSet, SigmaskHow, Signal};
-
-        let mut block_set = SigSet::empty();
-        block_set.add(Signal::SIGINT);
-        block_set.add(Signal::SIGTERM);
-        block_set.add(Signal::SIGHUP);
-
-        let mut old_mask = SigSet::empty();
-        nix::sys::signal::sigprocmask(SigmaskHow::SIG_BLOCK, Some(&block_set), Some(&mut old_mask))
-            .map_err(|e| ChpasswdError::UnexpectedFailure(format!("cannot block signals: {e}")))?;
-
-        Ok(Self { old_mask })
-    }
-}
-
-impl Drop for SignalBlocker {
-    fn drop(&mut self) {
-        let _ = nix::sys::signal::sigprocmask(
-            nix::sys::signal::SigmaskHow::SIG_SETMASK,
-            Some(&self.old_mask),
-            None,
-        );
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Input parsing
 // ---------------------------------------------------------------------------
@@ -224,7 +185,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let root = SysRoot::default();
 
     // chpasswd always requires root.
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         return Err(ChpasswdError::PermissionDenied("Permission denied.".into()).into());
     }
 
@@ -348,7 +309,8 @@ fn apply_password_changes(
     }
 
     // Block signals for the entire critical section.
-    let _signals = SignalBlocker::block_critical()?;
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| ChpasswdError::UnexpectedFailure(e.to_string()))?;
 
     let shadow_path = root.shadow_path();
 
@@ -448,14 +410,9 @@ fn resolve_crypt_method(
     }
 }
 
-/// Check if the *real* caller is root (not just setuid-root).
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
 /// Perform `chroot(2)` into the specified directory.
 fn do_chroot(dir: &str) -> Result<(), ChpasswdError> {
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         return Err(ChpasswdError::PermissionDenied(
             "only root may use --root".into(),
         ));
