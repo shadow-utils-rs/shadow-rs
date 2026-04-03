@@ -44,6 +44,10 @@ changes that are specified on the command line.
 **-L**, **--lock**
 :   Lock the user's password by prepending a '!' to the shadow password.
 
+**-p**, **--password** *PASSWORD*
+:   Set the user's password to the specified pre-hashed value. The hash
+    must not contain ':', '\\n', or '\\r' characters.
+
 **-P**, **--prefix** *PREFIX_DIR*
 :   Use *PREFIX_DIR* as a prefix for system file paths.
 

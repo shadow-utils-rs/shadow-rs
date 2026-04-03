@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `usermod -p/--password` flag for setting pre-hashed passwords (#114)
+- End-to-end deployment tests in Docker: 117 assertions covering symlink
+  dispatch, setuid, PAM, Landlock, nscd, and Ansible interop (#102, #115)
+- Docker multi-distro CI in GitHub Actions (debian, alpine, fedora)
+- Shell completion generation for bash, zsh, fish (#106)
+- Renovate for automated dependency updates
+- `rust-toolchain.toml` for contributor convenience
+- `feat_common_core` feature alias (all 14 tools)
+
+### Changed
+
+- Cargo.toml metadata aligned with uutils ecosystem conventions
+- Tool crate descriptions normalized to `"tool ~ (shadow-rs) verb phrase"` format
+- Edition 2024 consistently applied across root and workspace packages
+
+### Fixed
+
+- Password hash validation rejects `:`, `\n`, `\r` (field injection prevention)
+- Error on missing shadow entry in usermod (was silent no-op)
+- `days_since_epoch()` centralized in shadow-core (was duplicated)
+
 ## [0.1.0] - 2026-03-24
 
 ### Added

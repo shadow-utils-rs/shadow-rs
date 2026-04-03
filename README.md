@@ -22,8 +22,9 @@ passwords, and groups on every Linux system.
 shadow-utils runs as **root or setuid-root on every Linux system**. It parses
 user-supplied input, writes to `/etc/passwd`, `/etc/shadow`, `/etc/group`, and
 has had recent CVEs (CVE-2023-4641: password leak in memory, CVE-2024-56433:
-subuid collision enabling account takeover). There is **no Rust
-reimplementation** — not in uutils, not in Prossimo/Trifecta, not on crates.io.
+subuid collision enabling account takeover). Until shadow-rs, there was **no
+Rust reimplementation** — not in uutils, not in Prossimo/Trifecta, not on
+crates.io.
 
 [sudo-rs](https://github.com/trifectatechfoundation/sudo-rs) proved the model:
 an independent Rust rewrite of a privilege-boundary tool can go from zero to
@@ -42,6 +43,9 @@ default-in-Ubuntu in under 3 years. shadow-rs follows that playbook.
 - **Well-tested**: unit tests, property-based tests (`proptest`), integration
   tests, fuzz targets for all parsers. Tested on Debian, Alpine (musl), and
   Fedora (SELinux).
+- **Hardened**: Landlock filesystem sandboxing, signal blocking during
+  critical sections, core dump suppression, environment sanitization,
+  privilege drop during PAM.
 - **Auditable**: small dependency tree, `cargo-deny` license and advisory
   checks, no GPL dependencies.
 
@@ -49,11 +53,11 @@ default-in-Ubuntu in under 3 years. shadow-rs follows that playbook.
 
 | Tool | Status |
 |------|--------|
-| `passwd` | **All 17 flags implemented.** Drop-in for GNU passwd. PAM password change, `--root`, `--quiet`, `--stdin`. Output bit-for-bit identical with GNU. |
+| `passwd` | **All 16 flags implemented.** Drop-in for GNU passwd. PAM password change, Landlock sandboxing, `--root`, `--quiet`, `--stdin`. Output bit-for-bit identical with GNU. |
 | `pwck` | **All checks implemented.** Drop-in for GNU pwck. Bit-for-bit identical output. |
 | `useradd` | **Implemented.** UID/GID allocation, home dir + skel, shadow entry, group creation. |
 | `userdel` | **Implemented.** Remove from all system files, optional home/mail cleanup. |
-| `usermod` | **Implemented.** Modify all properties, group membership, lock/unlock. |
+| `usermod` | **Implemented.** Modify all properties, group membership, lock/unlock, set pre-hashed password. |
 | `chpasswd` | **Implemented.** Batch password change from stdin. |
 | `chage` | **Implemented.** Password aging management, `-l` list mode. |
 | `groupadd` | **Implemented.** Auto GID allocation, system groups, force mode. |

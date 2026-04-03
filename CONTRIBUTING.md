@@ -91,8 +91,9 @@ Utilities must be embeddable. Return `UResult<()>` from `uumain`. The
 
 ### `unsafe`
 
-Only for FFI (nix crate for syscalls, PAM crate for PAM). Every `unsafe` block
-must have a `// SAFETY:` comment explaining why it's sound.
+Denied at the workspace level (`unsafe_code = "deny"`). Only two FFI boundary
+modules are exempted: `shadow_core::pam` (PAM C library) and `shadow_core::crypt`
+(POSIX crypt(3)). Every `unsafe` block must have a `// SAFETY:` comment.
 
 ### `str`, `OsStr` & `Path`
 
