@@ -885,12 +885,13 @@ fn append_subid_entry(path: &Path, name: &str, count: u64) -> UResult<()> {
     }
 
     // Find next available range by starting after the highest existing end.
-    // This prevents overlapping ranges that could allow container escape.
+    // Clamp to at least 100_000 even if existing entries are below that threshold.
     let start = entries
         .iter()
         .map(|e| e.start.saturating_add(e.count))
         .max()
-        .unwrap_or(100_000);
+        .unwrap_or(100_000)
+        .max(100_000);
 
     entries.push(SubIdEntry {
         name: name.to_string(),

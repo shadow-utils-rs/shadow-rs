@@ -127,7 +127,7 @@ impl GrpckOptions {
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
-    let _clean_env = shadow_core::hardening::harden_process();
+    let _ = shadow_core::hardening::harden_process();
 
     let matches = uu_app().try_get_matches_from(args)?;
     let opts = GrpckOptions::from_matches(&matches);
