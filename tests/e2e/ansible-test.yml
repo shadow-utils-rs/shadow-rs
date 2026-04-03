@@ -1,0 +1,132 @@
+---
+# Ansible integration test for shadow-rs
+#
+# Validates that shadow-rs tools work as drop-in replacements when
+# called by Ansible's user/group modules (which invoke useradd,
+# userdel, usermod, groupadd, groupdel directly as subprocesses).
+#
+# Usage:
+#   ansible-playbook -c local -i "localhost," tests/e2e/ansible-test.yml
+
+- name: shadow-rs integration test
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    test_user: ansibleuser
+    test_group: ansiblegroup
+    test_uid: 3000
+    test_gid: 3000
+    test_password: "AnsiblePass123"
+
+  tasks:
+    # ── Create ──────────────────────────────────────────────────────
+
+    - name: Create test group
+      ansible.builtin.group:
+        name: "{{ test_group }}"
+        gid: "{{ test_gid }}"
+        state: present
+
+    - name: Create test user
+      ansible.builtin.user:
+        name: "{{ test_user }}"
+        uid: "{{ test_uid }}"
+        group: "{{ test_group }}"
+        shell: /bin/bash
+        create_home: true
+        comment: "Ansible Test User"
+
+    - name: Verify user exists in passwd
+      ansible.builtin.command: getent passwd {{ test_user }}
+      register: getent_result
+      changed_when: false
+
+    - name: Assert user fields
+      ansible.builtin.assert:
+        that:
+          - "test_user in getent_result.stdout"
+          - "'/bin/bash' in getent_result.stdout"
+          - "test_uid | string in getent_result.stdout"
+        fail_msg: "User {{ test_user }} not created correctly"
+
+    - name: Verify group exists
+      ansible.builtin.command: getent group {{ test_group }}
+      register: group_result
+      changed_when: false
+
+    - name: Assert group fields
+      ansible.builtin.assert:
+        that:
+          - "test_group in group_result.stdout"
+          - "test_gid | string in group_result.stdout"
+        fail_msg: "Group {{ test_group }} not created correctly"
+
+    # ── Modify ──────────────────────────────────────────────────────
+
+    # Set password via chpasswd -e (usermod -p not yet implemented)
+    - name: Set user password via chpasswd
+      ansible.builtin.shell: |
+        echo "{{ test_user }}:$(openssl passwd -6 '{{ test_password }}')" | chpasswd -e
+      changed_when: true
+
+    - name: Modify user shell
+      ansible.builtin.user:
+        name: "{{ test_user }}"
+        shell: /bin/sh
+
+    - name: Verify shell changed
+      ansible.builtin.command: getent passwd {{ test_user }}
+      register: shell_result
+      changed_when: false
+
+    - name: Assert shell is /bin/sh
+      ansible.builtin.assert:
+        that:
+          - "'/bin/sh' in shell_result.stdout"
+        fail_msg: "Shell not changed to /bin/sh"
+
+    - name: Add supplementary group
+      ansible.builtin.user:
+        name: "{{ test_user }}"
+        groups: "{{ test_group }}"
+        append: true
+
+    # ── Integrity checks ────────────────────────────────────────────
+
+    - name: Run pwck read-only check
+      ansible.builtin.command: pwck -r
+      register: pwck_result
+      changed_when: false
+      failed_when: pwck_result.rc not in [0, 2]
+
+    - name: Run grpck read-only check
+      ansible.builtin.command: grpck -r
+      register: grpck_result
+      changed_when: false
+      failed_when: grpck_result.rc not in [0, 2]
+
+    # ── Cleanup ─────────────────────────────────────────────────────
+
+    - name: Delete test user
+      ansible.builtin.user:
+        name: "{{ test_user }}"
+        state: absent
+        remove: true
+
+    - name: Delete test group
+      ansible.builtin.group:
+        name: "{{ test_group }}"
+        state: absent
+
+    - name: Verify user deleted
+      ansible.builtin.command: getent passwd {{ test_user }}
+      register: deleted_user
+      failed_when: deleted_user.rc == 0
+      changed_when: false
+
+    - name: Verify group deleted
+      ansible.builtin.command: getent group {{ test_group }}
+      register: deleted_group
+      failed_when: deleted_group.rc == 0
+      changed_when: false

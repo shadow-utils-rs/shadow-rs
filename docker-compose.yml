@@ -4,6 +4,8 @@
 #   docker compose run --rm alpine cargo test
 #   docker compose run --rm fedora cargo test
 #   docker compose up --build               # build all images
+#   docker compose run --rm e2e              # end-to-end deployment tests
+#   docker compose run --rm e2e bash         # debug e2e interactively
 #
 # The cargo registry cache is shared across Debian/Alpine (same CARGO_HOME path).
 # Fedora uses a separate cache (rustup installs to /root/.cargo).
@@ -46,6 +48,20 @@ services:
       - .:/workspace
       - cargo-cache-fedora:/root/.cargo/registry
       - target-fedora:/workspace/target
+
+  # End-to-end deployment test — self-contained, no shared volumes.
+  # Builds shadow-rs from source, installs system-wide, runs ~100 assertions.
+  e2e:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.e2e
+    security_opt:
+      - seccomp:unconfined
+      - "no-new-privileges:false"
+    cap_add:
+      - SYS_ADMIN
+    tmpfs:
+      - /tmp
 
 volumes:
   cargo-cache:

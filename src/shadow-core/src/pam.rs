@@ -175,6 +175,7 @@ pub struct PamConv {
 // PAM FFI function declarations
 // ---------------------------------------------------------------------------
 
+#[link(name = "pam")]
 unsafe extern "C" {
     fn pam_start(
         service_name: *const libc::c_char,
