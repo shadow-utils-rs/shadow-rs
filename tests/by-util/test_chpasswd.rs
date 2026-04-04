@@ -55,6 +55,14 @@ fn test_invalid_crypt_method_exits_error() {
 // ---------------------------------------------------------------------------
 // Root-only tests — exercise real operations via shadow-core
 // ---------------------------------------------------------------------------
+//
+// TODO(#integration): These tests directly manipulate shadow-core data
+// structures instead of calling chpasswd::uumain(). Full end-to-end
+// integration via uumain() is not yet feasible because chpasswd only supports
+// --root (which performs a real chroot(2) and requires root), not --prefix
+// (path-prefix without chroot). Once chpasswd gains a --prefix flag, replace
+// these tests with uumain() calls using run(&["chpasswd", "--prefix", ...,
+// "-e", ...]) with synthetic files.
 
 #[test]
 fn test_batch_password_update() {

@@ -118,6 +118,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         None
     };
 
+    // Block signals for the file-modification critical section only.
+    // Dropped before home removal so long-running deletions remain interruptible.
+    let signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| UserdelError::CantUpdatePasswd(format!("cannot block signals: {e}")))?;
+
     // 1. Remove from /etc/passwd
     remove_entry_from_file::<PasswdEntry>(&passwd_path, login, "passwd")
         .map_err(UserdelError::CantUpdatePasswd)?;
@@ -139,6 +144,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     if gshadow_path.exists() {
         let _ = remove_from_gshadow_members(&gshadow_path, login);
     }
+
+    // Restore signals before potentially long-running home removal.
+    drop(signals);
 
     // 5. Optionally remove home directory (using the path saved from passwd).
     if remove_home {
@@ -423,6 +431,8 @@ mod tests {
         assert!(m.get_flag(options::FORCE));
     }
 
+    // Duplicated from tests/common/mod.rs — unit tests inside the crate
+    // cannot import from the workspace-level tests directory.
     fn skip_unless_root() -> bool {
         !nix::unistd::geteuid().is_root()
     }

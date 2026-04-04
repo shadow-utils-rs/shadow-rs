@@ -24,12 +24,24 @@ use crate::error::ShadowError;
 /// On creation, sets the umask to zero so that file mode bits passed to
 /// `OpenOptions::mode()` are applied exactly. The original umask is restored
 /// when the guard is dropped, even on error or panic paths.
-struct UmaskGuard(nix::sys::stat::Mode);
+///
+/// # Thread safety
+///
+/// `umask(2)` is a process-wide operation. This guard is NOT safe to use
+/// from multiple threads concurrently. All shadow-rs tools are
+/// single-threaded, so this is not an issue in practice.
+struct UmaskGuard(
+    nix::sys::stat::Mode,
+    std::marker::PhantomData<std::rc::Rc<()>>,
+);
 
 impl UmaskGuard {
     /// Set umask to zero and return a guard that restores the original.
     fn zero() -> Self {
-        Self(nix::sys::stat::umask(nix::sys::stat::Mode::empty()))
+        Self(
+            nix::sys::stat::umask(nix::sys::stat::Mode::empty()),
+            std::marker::PhantomData,
+        )
     }
 }
 
@@ -105,7 +117,21 @@ where
         .create_new(true)
         .mode(mode)
         .open(&tmp_path)
-        .map_err(|e| ShadowError::IoPath(e, tmp_path.clone()))?;
+        .or_else(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                // Stale tmp file from a crashed run — remove and retry once.
+                fs::remove_file(&tmp_path)
+                    .map_err(|re| ShadowError::IoPath(re, tmp_path.clone()))?;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(mode)
+                    .open(&tmp_path)
+                    .map_err(|e2| ShadowError::IoPath(e2, tmp_path.clone()))
+            } else {
+                Err(ShadowError::IoPath(e, tmp_path.clone()))
+            }
+        })?;
 
     f(&mut tmp_file)?;
 

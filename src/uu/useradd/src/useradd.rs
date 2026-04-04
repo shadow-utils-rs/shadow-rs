@@ -170,11 +170,6 @@ struct UseraddOptions {
 
 // Hardening functions are now centralized in shadow_core::hardening.
 
-/// Check whether the real UID is root.
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
 // ---------------------------------------------------------------------------
 // Date parsing
 // ---------------------------------------------------------------------------
@@ -293,7 +288,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     };
 
     // Only root can add users.
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("Permission denied.");
         return Err(UseraddError::AlreadyPrinted(1).into());
     }
@@ -480,7 +475,12 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     validate::validate_username(&opts.login)
         .map_err(|e| UseraddError::BadArgument(format!("{e}")))?;
 
-    // Step 2: Acquire locks BEFORE reading so concurrent useradd cannot
+    // Step 2: Block signals for the lock→write critical section only.
+    // Dropped after file writes complete so home creation remains interruptible.
+    let signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| UseraddError::CannotUpdatePasswd(format!("cannot block signals: {e}")))?;
+
+    // Acquire locks BEFORE reading so concurrent useradd cannot
     // silently overwrite entries added between our read and write.
     let passwd_path = opts.root.passwd_path();
     let passwd_lock = FileLock::acquire(&passwd_path)
@@ -587,9 +587,12 @@ fn do_useradd(opts: &UseraddOptions) -> UResult<()> {
     };
     write_shadow_entry(&shadow_path, &shadow_entry)?;
 
-    // Release locks now that passwd, group, and shadow writes are complete.
+    // Release locks and signal blocker now that passwd, group, and shadow writes are complete.
+    // Subsequent steps (subid, supplementary groups, home creation) are individually
+    // crash-safe and may be long-running, so signals should be interruptible.
     drop(group_lock);
     drop(passwd_lock);
+    drop(signals);
 
     // Step 14: Allocate subordinate UID/GID ranges for rootless containers.
     // Only done when the relevant file exists (matching GNU shadow-utils behavior).

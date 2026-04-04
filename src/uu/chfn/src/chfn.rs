@@ -105,70 +105,15 @@ impl Gecos {
 // Hardening functions are now centralized in shadow_core::hardening.
 
 // ---------------------------------------------------------------------------
-// Signal blocking
-// ---------------------------------------------------------------------------
-
-/// RAII guard that blocks signals during critical sections.
-struct SignalBlocker {
-    old_mask: nix::sys::signal::SigSet,
-}
-
-impl SignalBlocker {
-    fn block_critical() -> Result<Self, ChfnError> {
-        use nix::sys::signal::{SigSet, SigmaskHow, Signal};
-
-        let mut block_set = SigSet::empty();
-        block_set.add(Signal::SIGINT);
-        block_set.add(Signal::SIGTERM);
-        block_set.add(Signal::SIGHUP);
-
-        let mut old_mask = SigSet::empty();
-        nix::sys::signal::sigprocmask(SigmaskHow::SIG_BLOCK, Some(&block_set), Some(&mut old_mask))
-            .map_err(|e| ChfnError::Error(format!("cannot block signals: {e}")))?;
-
-        Ok(Self { old_mask })
-    }
-}
-
-impl Drop for SignalBlocker {
-    fn drop(&mut self) {
-        let _ = nix::sys::signal::sigprocmask(
-            nix::sys::signal::SigmaskHow::SIG_SETMASK,
-            Some(&self.old_mask),
-            None,
-        );
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Check if the *real* caller is root.
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
-/// Return the current user's username (from real UID).
-fn get_current_username() -> Result<String, ChfnError> {
-    let uid = nix::unistd::getuid();
-    match nix::unistd::User::from_uid(uid) {
-        Ok(Some(user)) => Ok(user.name),
-        Ok(None) => Err(ChfnError::Error(format!(
-            "cannot determine current username for uid {uid}"
-        ))),
-        Err(e) => Err(ChfnError::Error(format!(
-            "cannot determine current username: {e}"
-        ))),
-    }
-}
 
 /// Resolve the target username from args or current user.
 fn resolve_target_user(matches: &clap::ArgMatches) -> Result<String, ChfnError> {
     if let Some(user) = matches.get_one::<String>(options::USER) {
         return Ok(user.clone());
     }
-    get_current_username()
+    shadow_core::hardening::current_username().map_err(|e| ChfnError::Error(e.to_string()))
 }
 
 /// Validate that a GECOS sub-field does not contain illegal characters.
@@ -190,7 +135,7 @@ fn validate_gecos_field(value: &str, field_name: &str, allow_comma: bool) -> Res
 
 /// Perform `chroot(2)` into the specified directory.
 fn do_chroot(dir: &str) -> Result<(), ChfnError> {
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         return Err(ChfnError::Error("only root may use --root".into()));
     }
 
@@ -219,7 +164,8 @@ where
         let _ = nix::unistd::setuid(nix::unistd::Uid::from_raw(0));
     }
 
-    let _signals = SignalBlocker::block_critical()?;
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| ChfnError::Error(e.to_string()))?;
 
     let passwd_path = root.passwd_path();
 
@@ -301,8 +247,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let target_user = resolve_target_user(&matches)?;
 
     // Non-root users can only change their own info.
-    if !caller_is_root() {
-        let current_user = get_current_username()?;
+    if !shadow_core::hardening::caller_is_root() {
+        let current_user = shadow_core::hardening::current_username()
+            .map_err(|e| ChfnError::Error(e.to_string()))?;
         if current_user != target_user {
             return Err(
                 ChfnError::Error("you may only change your own finger information".into()).into(),
@@ -349,7 +296,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     // Non-root users may not set the "other" field (matches GNU behavior).
-    if !caller_is_root() && new_other.is_some() {
+    if !shadow_core::hardening::caller_is_root() && new_other.is_some() {
         return Err(ChfnError::Error("only root may change the 'other' field".into()).into());
     }
 

@@ -77,10 +77,6 @@ impl UError for GroupdelError {
 
 // Hardening functions are now centralized in shadow_core::hardening.
 
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -100,7 +96,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         }
     };
 
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         uucore::show_error!("Permission denied.");
         return Err(GroupdelError::AlreadyPrinted(1).into());
     }
@@ -112,6 +108,11 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let prefix = matches.get_one::<String>(options::PREFIX).map(Path::new);
     let root_dir = matches.get_one::<String>(options::ROOT).map(Path::new);
     let root = SysRoot::new(prefix.or(root_dir));
+
+    // Block signals for the duration of the critical section so a SIGINT
+    // between lock acquisition and atomic_write cannot leave stale lock files.
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| GroupdelError::CantUpdate(format!("cannot block signals: {e}")))?;
 
     // Read existing groups to find the target.
     let group_path = root.group_path();

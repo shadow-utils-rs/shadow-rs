@@ -371,7 +371,7 @@ fn prompt_for_input(
 /// to the real terminal even if stdin has been redirected. Uses
 /// `nix::sys::termios` to disable `ECHO` for password prompts and restores
 /// the original settings afterward (including on error, via a drop guard).
-fn read_from_tty(message: &PamMessage, echo: bool) -> io::Result<String> {
+fn read_from_tty(message: &PamMessage, echo: bool) -> io::Result<zeroize::Zeroizing<String>> {
     let mut tty = File::options().read(true).write(true).open("/dev/tty")?;
 
     // Show prompt.
@@ -391,7 +391,7 @@ fn read_from_tty(message: &PamMessage, echo: bool) -> io::Result<String> {
 
     // Read one line from the tty.
     let mut reader = io::BufReader::new(tty.try_clone()?);
-    let mut line = String::new();
+    let mut line = zeroize::Zeroizing::new(String::new());
     reader.read_line(&mut line)?;
 
     // Print a newline after hidden input so the cursor moves down.
@@ -412,9 +412,9 @@ fn read_from_tty(message: &PamMessage, echo: bool) -> io::Result<String> {
 }
 
 /// Read a line from stdin without prompting.
-fn read_from_stdin() -> io::Result<String> {
+fn read_from_stdin() -> io::Result<zeroize::Zeroizing<String>> {
     let stdin = io::stdin();
-    let mut line = String::new();
+    let mut line = zeroize::Zeroizing::new(String::new());
     stdin.lock().read_line(&mut line)?;
 
     if line.ends_with('\n') {
@@ -725,12 +725,13 @@ impl Drop for PamContext {
     }
 }
 
-// `PamContext` holds a raw pointer but is safe to send between threads — the
-// PAM handle is only accessed through `&mut self` methods, and the pointer is
-// not shared.
-//
 // SAFETY: The raw pointer `handle` is exclusively owned by `PamContext`. No
 // concurrent access is possible because all mutating methods require `&mut self`.
+//
+// Note: While sending the handle between threads is memory-safe, PAM module
+// implementations are not guaranteed to be thread-safe. In practice, all
+// shadow-rs tools are single-threaded, so this is not an issue. Do not use
+// `PamContext` across threads without verifying the PAM modules in use.
 unsafe impl Send for PamContext {}
 
 // ---------------------------------------------------------------------------

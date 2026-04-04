@@ -93,49 +93,6 @@ impl UError for ChageError {
     }
 }
 
-// Hardening functions are now centralized in shadow_core::hardening.
-
-// ---------------------------------------------------------------------------
-// Signal blocking during critical sections
-// ---------------------------------------------------------------------------
-
-/// RAII guard that blocks signals during critical sections and restores on drop.
-///
-/// Prevents SIGINT/SIGTERM/SIGHUP from interrupting a lock-modify-write
-/// sequence, which could leave the shadow file in an inconsistent state
-/// or holding a stale lock.
-struct SignalBlocker {
-    old_mask: nix::sys::signal::SigSet,
-}
-
-impl SignalBlocker {
-    /// Block `SIGINT`, `SIGTERM`, `SIGHUP` to prevent partial file writes.
-    fn block_critical() -> Result<Self, ChageError> {
-        use nix::sys::signal::{SigSet, SigmaskHow, Signal};
-
-        let mut block_set = SigSet::empty();
-        block_set.add(Signal::SIGINT);
-        block_set.add(Signal::SIGTERM);
-        block_set.add(Signal::SIGHUP);
-
-        let mut old_mask = SigSet::empty();
-        nix::sys::signal::sigprocmask(SigmaskHow::SIG_BLOCK, Some(&block_set), Some(&mut old_mask))
-            .map_err(|e| ChageError::UnexpectedFailure(format!("cannot block signals: {e}")))?;
-
-        Ok(Self { old_mask })
-    }
-}
-
-impl Drop for SignalBlocker {
-    fn drop(&mut self) {
-        let _ = nix::sys::signal::sigprocmask(
-            nix::sys::signal::SigmaskHow::SIG_SETMASK,
-            Some(&self.old_mask),
-            None,
-        );
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Date parsing
 // ---------------------------------------------------------------------------
@@ -312,8 +269,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
     if is_list {
         // -l mode: non-root can view own aging info.
-        if !caller_is_root() {
-            let current_user = get_current_username()?;
+        if !shadow_core::hardening::caller_is_root() {
+            let current_user = shadow_core::hardening::current_username()
+                .map_err(|e| ChageError::UnexpectedFailure(e.to_string()))?;
             if current_user != *login {
                 return Err(ChageError::PermissionDenied("Permission denied.".into()).into());
             }
@@ -322,7 +280,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     }
 
     // All modification flags require root.
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         return Err(ChageError::PermissionDenied("Permission denied.".into()).into());
     }
 
@@ -537,35 +495,12 @@ fn compute_inactive_display(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Check if the *real* caller is root (not just setuid-root).
-///
-/// Uses `getuid()` (real UID). When chage is installed setuid-root,
-/// euid is 0 for all callers, but real UID identifies who actually
-/// invoked the program.
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
-/// Return the current user's username (from real UID).
-fn get_current_username() -> Result<String, ChageError> {
-    let uid = nix::unistd::getuid();
-    match nix::unistd::User::from_uid(uid) {
-        Ok(Some(user)) => Ok(user.name),
-        Ok(None) => Err(ChageError::UnexpectedFailure(format!(
-            "cannot determine current username for uid {uid}"
-        ))),
-        Err(e) => Err(ChageError::UnexpectedFailure(format!(
-            "cannot determine current username: {e}"
-        ))),
-    }
-}
-
 /// Perform `chroot(2)` into the specified directory.
 ///
 /// Must be root to call `chroot`. After `chroot`, chdir to `/` so the
 /// working directory is valid inside the new root.
 fn do_chroot(dir: &str) -> Result<(), ChageError> {
-    if !caller_is_root() {
+    if !shadow_core::hardening::caller_is_root() {
         return Err(ChageError::PermissionDenied(
             "only root may use --root".into(),
         ));
@@ -595,7 +530,8 @@ where
     }
 
     // Block signals for the entire critical section (lock -> write -> unlock).
-    let _signals = SignalBlocker::block_critical()?;
+    let _signals = shadow_core::hardening::SignalBlocker::block_critical()
+        .map_err(|e| ChageError::UnexpectedFailure(e.to_string()))?;
 
     let shadow_path = root.shadow_path();
 

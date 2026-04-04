@@ -70,7 +70,7 @@ enum PwckError {
     /// Exit 5 -- cannot update files.
     CantUpdate(String),
     /// Exit 6 -- cannot sort files (sort logic errors only).
-    #[allow(dead_code)]
+    #[cfg_attr(not(test), allow(dead_code))]
     CantSort(String),
 }
 

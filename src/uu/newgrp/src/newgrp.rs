@@ -68,24 +68,6 @@ impl UError for NewgrpError {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn caller_is_root() -> bool {
-    nix::unistd::getuid().is_root()
-}
-
-/// Get the current user's username from the real UID.
-fn get_current_username() -> Result<String, NewgrpError> {
-    let uid = nix::unistd::getuid();
-    match nix::unistd::User::from_uid(uid) {
-        Ok(Some(user)) => Ok(user.name),
-        Ok(None) => Err(NewgrpError::Error(format!(
-            "cannot determine current username for uid {uid}"
-        ))),
-        Err(e) => Err(NewgrpError::Error(format!(
-            "cannot determine current username: {e}"
-        ))),
-    }
-}
-
 /// Get the current user's primary GID from the real UID.
 fn get_current_gid() -> Result<u32, NewgrpError> {
     let uid = nix::unistd::getuid();
@@ -239,10 +221,9 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, NewgrpError> {
 
 #[uucore::main]
 pub fn uumain(args: impl uucore::Args) -> UResult<()> {
+    // newgrp execs a shell, so only suppress core dumps — do NOT raise
+    // RLIMIT_FSIZE as that would leak into the user's interactive session.
     shadow_core::hardening::suppress_core_dumps();
-    // sanitized_env() returns a clean env without mutating the process.
-    // newgrp preserves the current process env because it needs $SHELL
-    // and $HOME for the new shell session.
     let _clean_env = shadow_core::hardening::sanitized_env();
 
     let matches = match uu_app().try_get_matches_from(args) {
@@ -257,7 +238,8 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     };
 
     let root = SysRoot::default();
-    let username = get_current_username()?;
+    let username = shadow_core::hardening::current_username()
+        .map_err(|e| NewgrpError::Error(e.to_string()))?;
     let user_gid = get_current_gid()?;
 
     let group_name = matches.get_one::<String>(options::GROUP);
@@ -278,7 +260,9 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
 
         // Check membership: if the user is not a member, they need the
         // group password. Root always gets in.
-        if !caller_is_root() && !is_member(&username, user_gid, gid, &group_entry.members) {
+        if !shadow_core::hardening::caller_is_root()
+            && !is_member(&username, user_gid, gid, &group_entry.members)
+        {
             // Check if the group has a password in /etc/gshadow.
             let gshadow_path = root.gshadow_path();
             match group_has_password(&gshadow_path, gname) {
@@ -307,6 +291,13 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let gid = nix::unistd::Gid::from_raw(target_gid);
     nix::unistd::setgid(gid)
         .map_err(|e| NewgrpError::Error(format!("cannot set group ID to {target_gid}: {e}")))?;
+
+    // Reset supplementary groups. POSIX requires newgrp to reinitialize
+    // the group list. Without this, the new shell inherits stale groups.
+    let username_cstr = std::ffi::CString::new(username.as_str())
+        .map_err(|_| NewgrpError::Error("invalid username".into()))?;
+    nix::unistd::initgroups(&username_cstr, gid)
+        .map_err(|e| NewgrpError::Error(format!("cannot initialize groups: {e}")))?;
 
     // Drop back to the real UID (in case we are setuid-root).
     let real_uid = nix::unistd::getuid();

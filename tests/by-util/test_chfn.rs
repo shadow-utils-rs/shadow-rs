@@ -29,12 +29,6 @@ fn setup_prefix(passwd_content: &str) -> tempfile::TempDir {
     dir
 }
 
-/// Read the passwd file content back from a prefix dir.
-#[allow(dead_code)]
-fn read_passwd(dir: &tempfile::TempDir) -> String {
-    std::fs::read_to_string(dir.path().join("etc/passwd")).expect("failed to read passwd file")
-}
-
 // ---------------------------------------------------------------------------
 // Non-root tests
 // ---------------------------------------------------------------------------

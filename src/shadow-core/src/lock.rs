@@ -192,6 +192,13 @@ fn write_pid_file(tmp_path: &Path) -> Result<(), ShadowError> {
         ShadowError::Lock(format!("cannot write {}: {e}", tmp_path.display()).into())
     })?;
 
+    file.flush().map_err(|e| {
+        ShadowError::Lock(format!("cannot flush {}: {e}", tmp_path.display()).into())
+    })?;
+    nix::unistd::fsync(&file).map_err(|e| {
+        ShadowError::Lock(format!("cannot fsync {}: {e}", tmp_path.display()).into())
+    })?;
+
     Ok(())
 }
 

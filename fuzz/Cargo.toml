@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-shadow-core = { path = "../src/shadow-core", features = ["shadow", "login-defs"] }
+shadow-core = { path = "../src/shadow-core", features = ["shadow", "login-defs", "group", "gshadow"] }
 tempfile = "3"
 
 [workspace]
@@ -33,4 +33,14 @@ doc = false
 [[bin]]
 name = "fuzz_validate_username"
 path = "fuzz_targets/fuzz_validate_username.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_group_parse"
+path = "fuzz_targets/fuzz_group_parse.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_gshadow_parse"
+path = "fuzz_targets/fuzz_gshadow_parse.rs"
 doc = false

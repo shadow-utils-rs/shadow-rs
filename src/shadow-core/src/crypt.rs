@@ -22,6 +22,10 @@ unsafe extern "C" {
 /// crypt(3) salt alphabet (POSIX: [a-zA-Z0-9./]).
 const SALT_CHARS: &[u8] = b"./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
+// Modulo bias check: random u8 values (0-255) mapped via `% len` have zero
+// bias only when `len` divides 256 evenly. Assert this at compile time.
+const _: () = assert!(256 % SALT_CHARS.len() == 0);
+
 /// Supported crypt(3) hash methods.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptMethod {
@@ -80,6 +84,12 @@ fn generate_salt(method: CryptMethod, rounds: Option<u32>) -> Result<String, Sha
 ///
 /// Returns `ShadowError` if the password contains null bytes, the salt
 /// cannot be generated, or crypt(3) fails.
+///
+/// # Thread safety
+///
+/// This function is NOT thread-safe. `crypt(3)` uses a process-wide
+/// static buffer on glibc. Concurrent calls from multiple threads will
+/// corrupt each other's results. All shadow-rs tools are single-threaded.
 pub fn hash_password(
     password: &str,
     method: CryptMethod,
@@ -125,6 +135,12 @@ pub fn hash_password(
 /// # Errors
 ///
 /// Returns `ShadowError` if the inputs contain null bytes.
+///
+/// # Thread safety
+///
+/// This function is NOT thread-safe. `crypt(3)` uses a process-wide
+/// static buffer on glibc. Concurrent calls from multiple threads will
+/// corrupt each other's results. All shadow-rs tools are single-threaded.
 pub fn verify_password(password: &str, hash: &str) -> Result<bool, ShadowError> {
     let c_password = CString::new(password)
         .map_err(|_| ShadowError::Auth("password contains null byte".into()))?;

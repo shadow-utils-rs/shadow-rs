@@ -47,9 +47,6 @@ mod exit_codes {
     pub const CANT_LOCK: i32 = 4;
     /// Cannot update files.
     pub const CANT_UPDATE: i32 = 5;
-    /// Cannot sort files.
-    #[allow(dead_code)]
-    pub const CANT_SORT: i32 = 6;
 }
 
 #[derive(Debug)]
@@ -58,8 +55,6 @@ enum GrpckError {
     CantOpen(String),
     CantLock(String),
     CantUpdate(String),
-    #[allow(dead_code)]
-    CantSort(String),
 }
 
 impl fmt::Display for GrpckError {
@@ -68,8 +63,7 @@ impl fmt::Display for GrpckError {
             Self::BadEntry(msg)
             | Self::CantOpen(msg)
             | Self::CantLock(msg)
-            | Self::CantUpdate(msg)
-            | Self::CantSort(msg) => f.write_str(msg),
+            | Self::CantUpdate(msg) => f.write_str(msg),
         }
     }
 }
@@ -83,7 +77,6 @@ impl UError for GrpckError {
             Self::CantOpen(_) => exit_codes::CANT_OPEN,
             Self::CantLock(_) => exit_codes::CANT_LOCK,
             Self::CantUpdate(_) => exit_codes::CANT_UPDATE,
-            Self::CantSort(_) => exit_codes::CANT_SORT,
         }
     }
 }
@@ -344,15 +337,18 @@ fn sort_gshadow_by_group(
     gshadow_entries: &[GshadowEntry],
 ) -> Vec<GshadowEntry> {
     let mut result = Vec::with_capacity(gshadow_entries.len());
-    let gs_by_name: std::collections::HashMap<&str, &GshadowEntry> = gshadow_entries
-        .iter()
-        .map(|gs| (gs.name.as_str(), gs))
-        .collect();
+    let mut gs_by_name: std::collections::HashMap<&str, Vec<&GshadowEntry>> =
+        std::collections::HashMap::new();
+    for gs in gshadow_entries {
+        gs_by_name.entry(gs.name.as_str()).or_default().push(gs);
+    }
 
-    // First, add entries in group-sorted order.
+    // Add entries in group-sorted order, preserving duplicates.
     for g in sorted_groups {
-        if let Some(&gs) = gs_by_name.get(g.name.as_str()) {
-            result.push(gs.clone());
+        if let Some(entries) = gs_by_name.get(g.name.as_str()) {
+            for gs in entries {
+                result.push((*gs).clone());
+            }
         }
     }
 
