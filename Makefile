@@ -17,9 +17,7 @@ ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS)
 all: build
 
 build:
-	@for tool in $(ALL_TOOLS); do \
-		cargo build --profile $(PROFILE) -p uu_$$tool --bin $$tool || exit 1; \
-	done
+	cargo build --profile $(PROFILE) --workspace --bins --exclude shadow-rs
 
 build-multicall:
 	cargo build --profile $(PROFILE) --bin shadow-rs
@@ -30,11 +28,11 @@ test:
 # Default install: 14 standalone per-tool binaries with least-privilege setuid
 # layout matching GNU shadow-utils. Only passwd/chfn/chsh/newgrp are setuid.
 install: build
-	@for tool in $(ALL_TOOLS); do \
-		install -Dm755 target/$(PROFILE)/$$tool $(DESTDIR)$(BINDIR)/$$tool; \
-	done
 	@for tool in $(SETUID_TOOLS); do \
-		chmod 4755 $(DESTDIR)$(BINDIR)/$$tool 2>/dev/null || true; \
+		install -Dm4755 target/$(PROFILE)/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
+	done
+	@for tool in $(ROOT_TOOLS); do \
+		install -Dm0755 target/$(PROFILE)/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
 	done
 	@echo "Installed $(words $(ALL_TOOLS)) standalone binaries to $(DESTDIR)$(BINDIR)/"
 	@echo "  setuid (4755): $(SETUID_TOOLS)"
@@ -45,12 +43,9 @@ install: build
 # the ELF, so all tools end up running with euid=root. Intended for
 # container/embedded use where disk savings matter and attack surface does not.
 install-multicall: build-multicall
-	install -Dm755 target/$(PROFILE)/shadow-rs $(DESTDIR)$(BINDIR)/shadow-rs
+	install -Dm4755 target/$(PROFILE)/shadow-rs $(DESTDIR)$(BINDIR)/shadow-rs
 	@for tool in $(ALL_TOOLS); do \
 		ln -sf shadow-rs $(DESTDIR)$(BINDIR)/$$tool; \
-	done
-	@for tool in $(SETUID_TOOLS); do \
-		chmod 4755 $(DESTDIR)$(BINDIR)/$$tool 2>/dev/null || true; \
 	done
 	@echo "Installed multicall shadow-rs + $(words $(ALL_TOOLS)) symlinks to $(DESTDIR)$(BINDIR)/"
 
