@@ -96,9 +96,9 @@ sudo make install PREFIX=/usr/local
 ```
 
 Alternative: single multicall binary with symlinks. Smaller footprint (~14×
-disk savings) but larger setuid attack surface, since `chmod` on a setuid
-symlink follows through to the underlying ELF — all 14 tools end up running
-with `euid=root` when invoked. Intended for container/embedded use cases.
+disk savings) but larger setuid attack surface — the binary is installed
+setuid-root, so all 14 applets run with `euid=root` when invoked via symlink.
+Intended for container/embedded use cases.
 
 ```shell
 sudo make install-multicall PREFIX=/usr/local

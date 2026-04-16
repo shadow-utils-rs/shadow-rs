@@ -1,6 +1,5 @@
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/sbin
-PROFILE ?= release
 
 # Tools that need setuid-root to allow non-root callers (change own password,
 # GECOS, shell, effective group).
@@ -17,10 +16,10 @@ ALL_TOOLS = $(SETUID_TOOLS) $(ROOT_TOOLS)
 all: build
 
 build:
-	cargo build --profile $(PROFILE) --workspace --bins --exclude shadow-rs
+	cargo build --release --workspace --bins --exclude shadow-rs
 
 build-multicall:
-	cargo build --profile $(PROFILE) --bin shadow-rs
+	cargo build --release --bin shadow-rs
 
 test:
 	cargo test --workspace
@@ -29,21 +28,21 @@ test:
 # layout matching GNU shadow-utils. Only passwd/chfn/chsh/newgrp are setuid.
 install: build
 	@for tool in $(SETUID_TOOLS); do \
-		install -Dm4755 target/$(PROFILE)/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
+		install -Dm4755 target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
 	done
 	@for tool in $(ROOT_TOOLS); do \
-		install -Dm0755 target/$(PROFILE)/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
+		install -Dm0755 target/release/$$tool $(DESTDIR)$(BINDIR)/$$tool || exit 1; \
 	done
 	@echo "Installed $(words $(ALL_TOOLS)) standalone binaries to $(DESTDIR)$(BINDIR)/"
 	@echo "  setuid (4755): $(SETUID_TOOLS)"
 	@echo "  root-only (0755): $(ROOT_TOOLS)"
 
 # Opt-in install: single multicall binary with symlinks. Smaller footprint but
-# larger setuid attack surface — chmod on any setuid symlink follows through to
-# the ELF, so all tools end up running with euid=root. Intended for
+# larger setuid attack surface — the binary is installed setuid-root, so all 14
+# applets run with euid=root when invoked via symlink. Intended for
 # container/embedded use where disk savings matter and attack surface does not.
 install-multicall: build-multicall
-	install -Dm4755 target/$(PROFILE)/shadow-rs $(DESTDIR)$(BINDIR)/shadow-rs
+	install -Dm4755 target/release/shadow-rs $(DESTDIR)$(BINDIR)/shadow-rs
 	@for tool in $(ALL_TOOLS); do \
 		ln -sf shadow-rs $(DESTDIR)$(BINDIR)/$$tool; \
 	done
