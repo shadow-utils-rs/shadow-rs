@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
-use std::io::BufRead;
+use std::io::{BufRead, Write as _};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -203,7 +203,7 @@ fn run_checks(opts: &PwckOptions) -> UResult<()> {
             opts.read_only,
         )?;
     } else {
-        eprintln!("pwck: no changes");
+        uucore::show_error!("no changes");
     }
 
     if errors > 0 {
@@ -426,9 +426,11 @@ fn check_passwd_entries(
                 PathBuf::from(&entry.home)
             };
             if !home_path.exists() {
-                eprintln!(
+                let _ = writeln!(
+                    std::io::stderr(),
                     "user '{}': directory '{}' does not exist",
-                    entry.name, entry.home
+                    entry.name,
+                    entry.home
                 );
                 errors += 1;
             }
@@ -450,9 +452,11 @@ fn check_passwd_entries(
                 && !valid_shells.contains(Path::new(&entry.shell))
                 && !shell_path.exists()
             {
-                eprintln!(
+                let _ = writeln!(
+                    std::io::stderr(),
                     "user '{}': program '{}' does not exist",
-                    entry.name, entry.shell
+                    entry.name,
+                    entry.shell
                 );
                 errors += 1;
             }

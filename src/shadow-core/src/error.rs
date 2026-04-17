@@ -47,7 +47,12 @@ pub enum ShadowError {
 #[macro_export]
 macro_rules! show_error {
     ($util:expr, $($arg:tt)*) => {
-        eprintln!("{}: {}", $util, format_args!($($arg)*));
+        {
+            use std::io::Write as _;
+            let mut err = std::io::stderr().lock();
+            let _ = write!(err, "{}: ", $util);
+            let _ = writeln!(err, $($arg)*);
+        }
     };
 }
 
@@ -55,6 +60,11 @@ macro_rules! show_error {
 #[macro_export]
 macro_rules! show_warning {
     ($util:expr, $($arg:tt)*) => {
-        eprintln!("{}: warning: {}", $util, format_args!($($arg)*));
+        {
+            use std::io::Write as _;
+            let mut err = std::io::stderr().lock();
+            let _ = write!(err, "{}: warning: ", $util);
+            let _ = writeln!(err, $($arg)*);
+        }
     };
 }
