@@ -49,9 +49,7 @@ macro_rules! show_error {
     ($util:expr, $($arg:tt)*) => {
         {
             use std::io::Write as _;
-            let mut err = std::io::stderr().lock();
-            let _ = write!(err, "{}: ", $util);
-            let _ = writeln!(err, $($arg)*);
+            let _ = writeln!(std::io::stderr().lock(), "{}: {}", $util, format_args!($($arg)*));
         }
     };
 }
@@ -62,9 +60,7 @@ macro_rules! show_warning {
     ($util:expr, $($arg:tt)*) => {
         {
             use std::io::Write as _;
-            let mut err = std::io::stderr().lock();
-            let _ = write!(err, "{}: warning: ", $util);
-            let _ = writeln!(err, $($arg)*);
+            let _ = writeln!(std::io::stderr().lock(), "{}: warning: {}", $util, format_args!($($arg)*));
         }
     };
 }

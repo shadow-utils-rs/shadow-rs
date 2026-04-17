@@ -502,7 +502,7 @@ impl Drop for PrivDrop {
             // Failing to restore privileges is a critical error — log it loudly.
             // We can't return an error from Drop, so at least make it visible.
             let _ = writeln!(
-                std::io::stderr(),
+                std::io::stderr().lock(),
                 "passwd: CRITICAL: failed to restore euid to {}: {e}",
                 self.original_euid
             );

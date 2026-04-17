@@ -373,6 +373,7 @@ fn check_passwd_entries(
     let mut seen_names: HashSet<&str> = HashSet::new();
     let group_gids: HashSet<u32> = group_entries.iter().map(|g| g.gid).collect();
     let shadow_names: HashSet<&str> = shadow_entries.iter().map(|s| s.name.as_str()).collect();
+    let mut stderr = std::io::stderr().lock();
 
     for entry in passwd_entries {
         // Check 2: Unique and valid usernames.
@@ -427,10 +428,9 @@ fn check_passwd_entries(
             };
             if !home_path.exists() {
                 let _ = writeln!(
-                    std::io::stderr(),
+                    stderr,
                     "user '{}': directory '{}' does not exist",
-                    entry.name,
-                    entry.home
+                    entry.name, entry.home
                 );
                 errors += 1;
             }
@@ -453,10 +453,9 @@ fn check_passwd_entries(
                 && !shell_path.exists()
             {
                 let _ = writeln!(
-                    std::io::stderr(),
+                    stderr,
                     "user '{}': program '{}' does not exist",
-                    entry.name,
-                    entry.shell
+                    entry.name, entry.shell
                 );
                 errors += 1;
             }
