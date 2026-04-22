@@ -3,9 +3,9 @@
 
 # shadow-rs
 
-[![License](http://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/shadow-utils-rs/shadow-rs/blob/main/LICENSE)
-[![CI](https://github.com/shadow-utils-rs/shadow-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/shadow-utils-rs/shadow-rs/actions/workflows/ci.yml)
-[![MSRV](https://img.shields.io/badge/MSRV-1.94.0-blue)](https://github.com/shadow-utils-rs/shadow-rs)
+[![License](http://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/uutils/shadow-rs/blob/main/LICENSE)
+[![CI](https://github.com/uutils/shadow-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/uutils/shadow-rs/actions/workflows/ci.yml)
+[![MSRV](https://img.shields.io/badge/MSRV-1.94.0-blue)](https://github.com/uutils/shadow-rs)
 
 </div>
 
@@ -79,7 +79,7 @@ default-in-Ubuntu in under 3 years. shadow-rs follows that playbook.
 ### Build
 
 ```shell
-git clone https://github.com/shadow-utils-rs/shadow-rs
+git clone https://github.com/uutils/shadow-rs
 cd shadow-rs
 docker compose build debian
 docker compose run --rm debian cargo build --release

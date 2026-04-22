@@ -3,7 +3,7 @@ Version:        0.0.1
 Release:        1%{?dist}
 Summary:        Memory-safe reimplementation of shadow-utils in Rust
 License:        MIT
-URL:            https://github.com/shadow-utils-rs/shadow-rs
+URL:            https://github.com/uutils/shadow-rs
 Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  rust >= 1.94.0
