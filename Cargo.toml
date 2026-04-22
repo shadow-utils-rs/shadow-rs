@@ -74,6 +74,8 @@ tempfile = "3"
 [dependencies]
 clap = { workspace = true }
 clap_complete = { workspace = true, optional = true }
+shadow-core = { path = "src/shadow-core" }
+rustix = { workspace = true }
 
 # Tool crates (optional, enabled by features)
 passwd = { optional = true, version = "0.2.0", package = "uu_passwd", path = "src/uu/passwd" }

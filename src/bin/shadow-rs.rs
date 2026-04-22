@@ -30,6 +30,18 @@ fn main() -> ExitCode {
         })
         .unwrap_or_default();
 
+    // In setuid context, reject spoofed argv[0] that doesn't match AT_EXECFN.
+    // Only enforced when euid != uid (setuid active) — non-setuid invocations
+    // are harmless since the caller already has full privileges.
+    let is_setuid = rustix::process::getuid() != rustix::process::geteuid();
+    if is_setuid && !shadow_core::process::verify_argv0_matches_execfn(&binary_name) {
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "shadow-rs: argv[0] does not match executed binary, aborting"
+        );
+        return ExitCode::FAILURE;
+    }
+
     // Direct invocation via symlink (e.g., argv[0] = "passwd")
     if let Some(code) = dispatch(&binary_name, &args) {
         return to_exit_code(code);

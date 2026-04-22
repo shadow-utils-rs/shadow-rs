@@ -265,3 +265,42 @@ pub fn getpwuid(uid: u32) -> io::Result<Option<PwEntry>> {
 pub fn lookup_username(uid: u32) -> io::Result<Option<String>> {
     Ok(getpwuid(uid)?.map(|e| e.name))
 }
+
+// ---------------------------------------------------------------------------
+// AT_EXECFN validation (multicall setuid hardening)
+// ---------------------------------------------------------------------------
+
+/// Verify that `argv[0]` matches `AT_EXECFN` (the kernel-recorded executable path).
+///
+/// In setuid context, an attacker can spoof `argv[0]` to route a multicall
+/// binary to a different tool than the one the symlink points to. `AT_EXECFN`
+/// from the ELF auxiliary vector records the real path the kernel executed,
+/// which cannot be spoofed from userspace.
+///
+/// Returns `true` if the basenames match (or if `AT_EXECFN` is unavailable).
+/// Returns `false` if they differ — the caller should abort.
+pub fn verify_argv0_matches_execfn(argv0: &str) -> bool {
+    // SAFETY: getauxval is a standard glibc/musl function. AT_EXECFN returns
+    // a pointer to a null-terminated string in the auxiliary vector, valid for
+    // the lifetime of the process.
+    let execfn_ptr = unsafe { libc::getauxval(libc::AT_EXECFN) } as *const libc::c_char;
+    if execfn_ptr.is_null() {
+        // AT_EXECFN not available (old kernel or non-Linux) — allow.
+        return true;
+    }
+    let execfn = unsafe { CStr::from_ptr(execfn_ptr) };
+    let execfn = execfn.to_string_lossy();
+
+    // Compare basenames: argv[0] might be "passwd" while AT_EXECFN is
+    // "/usr/sbin/passwd" or "/usr/sbin/shadow-rs".
+    let argv0_base = std::path::Path::new(argv0)
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    let execfn_base = std::path::Path::new(execfn.as_ref())
+        .file_name()
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+
+    argv0_base == execfn_base
+}
