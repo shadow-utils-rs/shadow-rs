@@ -3,7 +3,7 @@
 
 # shadow-rs
 
-[![License](http://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/uutils/shadow-rs/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/uutils/shadow-rs/blob/main/LICENSE)
 [![CI](https://github.com/uutils/shadow-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/uutils/shadow-rs/actions/workflows/ci.yml)
 [![MSRV](https://img.shields.io/badge/MSRV-1.94.0-blue)](https://github.com/uutils/shadow-rs)
 
