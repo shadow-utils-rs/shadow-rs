@@ -45,7 +45,7 @@ then write an original implementation. Never search for or view the C source.
 ### Setup
 
 ```shell
-git clone https://github.com/shadow-utils-rs/shadow-rs
+git clone https://github.com/uutils/shadow-rs
 cd shadow-rs
 docker compose build
 ./hooks/install.sh  # install pre-commit and pre-push hooks
