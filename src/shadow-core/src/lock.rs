@@ -19,8 +19,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nix::unistd;
-
 use crate::error::ShadowError;
 
 /// Default lock timeout (matches GNU shadow-utils `LOCK_TIMEOUT`).
@@ -187,7 +185,7 @@ fn write_pid_file(tmp_path: &Path) -> Result<(), ShadowError> {
         }
     };
 
-    let pid = unistd::getpid();
+    let pid = rustix::process::getpid();
     write!(file, "{pid}").map_err(|e| {
         ShadowError::Lock(format!("cannot write {}: {e}", tmp_path.display()).into())
     })?;
@@ -195,7 +193,7 @@ fn write_pid_file(tmp_path: &Path) -> Result<(), ShadowError> {
     file.flush().map_err(|e| {
         ShadowError::Lock(format!("cannot flush {}: {e}", tmp_path.display()).into())
     })?;
-    nix::unistd::fsync(&file).map_err(|e| {
+    rustix::fs::fsync(&file).map_err(|e| {
         ShadowError::Lock(format!("cannot fsync {}: {e}", tmp_path.display()).into())
     })?;
 
@@ -217,13 +215,16 @@ fn is_stale_lock(lock_path: &Path) -> bool {
         return true;
     }
 
+    let Some(pid) = rustix::process::Pid::from_raw(pid) else {
+        return true;
+    };
+
     // Signal 0 checks if the process exists without actually sending a signal.
     // Only ESRCH means "no such process". EPERM means the process exists but
     // we lack permission to signal it — that is a valid lock holder.
-    let pid = nix::unistd::Pid::from_raw(pid);
     matches!(
-        nix::sys::signal::kill(pid, None),
-        Err(nix::errno::Errno::ESRCH)
+        rustix::process::test_kill_process(pid),
+        Err(rustix::io::Errno::SRCH)
     )
 }
 
@@ -305,6 +306,8 @@ mod tests {
         let lock = FileLock::acquire(&file).expect("failed to acquire lock");
 
         let f = fs::File::open(&lock.lock_path).expect("failed to open lock file");
+        // Uses nix for this test since rustix lacks fcntl_getfd. The nix
+        // dependency remains in shadow-core for hardening.rs and pam.rs.
         let flags =
             nix::fcntl::fcntl(&f, nix::fcntl::FcntlArg::F_GETFD).expect("fcntl F_GETFD failed");
         assert!(flags & libc::FD_CLOEXEC != 0, "FD should have CLOEXEC set");

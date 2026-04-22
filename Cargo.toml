@@ -60,6 +60,7 @@ thiserror = "2"
 
 # Unix/Linux
 nix = { version = "0.30", features = ["user", "fs", "process", "signal", "term", "resource"] }
+rustix = { version = "1", features = ["process", "fs"] }
 libc = "0.2"
 
 # Security
