@@ -27,6 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   least-privilege setuid layout matching GNU shadow-utils (#138). Only
   `passwd`/`chfn`/`chsh`/`newgrp` are setuid-root; the other 10 are `0755`.
   The previous multicall install is available as `make install-multicall`.
+- `nix` crate fully replaced by `rustix` (raw syscalls, no libc overhead).
+  `libc` kept only for PAM FFI, crypt(3) FFI, and process-wide POSIX
+  wrappers (setuid/sigprocmask/getpwuid_r) (#140)
+- `uucore` upgraded from 0.7 to 0.8 (#150)
+- Repo transferred from `shadow-utils-rs/shadow-rs` to `uutils/shadow-rs`
 
 ### Security
 
