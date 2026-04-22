@@ -192,6 +192,7 @@ pub struct PwEntry {
 /// Returns `Err` on system errors (e.g., I/O failure in NSS backend).
 pub fn getpwuid(uid: u32) -> io::Result<Option<PwEntry>> {
     // Start with a 1 KiB buffer; grow on ERANGE.
+    const MAX_BUF: usize = 1024 * 1024;
     let mut buf_size: usize = 1024;
 
     loop {
@@ -215,10 +216,9 @@ pub fn getpwuid(uid: u32) -> io::Result<Option<PwEntry>> {
         if ret == libc::ERANGE {
             // Buffer too small — double and retry.
             buf_size = buf_size.saturating_mul(2);
-            if buf_size > 1024 * 1024 {
-                return Err(io::Error::new(
-                    io::ErrorKind::OutOfMemory,
-                    "getpwuid_r buffer exceeded 1 MiB",
+            if buf_size > MAX_BUF {
+                return Err(io::Error::other(
+                    "getpwuid_r: ERANGE persists beyond 1 MiB buffer cap",
                 ));
             }
             continue;
@@ -233,17 +233,25 @@ pub fn getpwuid(uid: u32) -> io::Result<Option<PwEntry>> {
             return Ok(None);
         }
 
-        // SAFETY: getpwuid_r succeeded and `result` is non-null, so all
-        // string fields in `pwd` point into `buf` and are valid C strings.
+        // SAFETY: getpwuid_r succeeded and `result` is non-null, so `pwd`
+        // is populated. String fields should point into `buf`, but some NSS
+        // backends may return null for optional fields — guard defensively.
         let entry = unsafe {
+            let str_field = |ptr: *const libc::c_char| -> String {
+                if ptr.is_null() {
+                    String::new()
+                } else {
+                    CStr::from_ptr(ptr).to_string_lossy().into_owned()
+                }
+            };
             PwEntry {
-                name: CStr::from_ptr(pwd.pw_name).to_string_lossy().into_owned(),
-                passwd: CStr::from_ptr(pwd.pw_passwd).to_string_lossy().into_owned(),
+                name: str_field(pwd.pw_name),
+                passwd: str_field(pwd.pw_passwd),
                 uid: pwd.pw_uid,
                 gid: pwd.pw_gid,
-                gecos: CStr::from_ptr(pwd.pw_gecos).to_string_lossy().into_owned(),
-                home: CStr::from_ptr(pwd.pw_dir).to_string_lossy().into_owned(),
-                shell: CStr::from_ptr(pwd.pw_shell).to_string_lossy().into_owned(),
+                gecos: str_field(pwd.pw_gecos),
+                home: str_field(pwd.pw_dir),
+                shell: str_field(pwd.pw_shell),
             }
         };
 
